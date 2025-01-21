@@ -1,0 +1,6 @@
+build/
+rocSHMEM/
+*.sif
+.vscode/
+__pycache__/
+*.so
