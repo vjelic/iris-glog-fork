@@ -10,6 +10,7 @@ import ctypes
 def add_two(first, second):
     return first + second
 
+
 @triton.jit
 def copy_kernel(
     input_ptr,
@@ -23,24 +24,16 @@ def copy_kernel(
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
 
-
     cur_rank = 0
     dst_rank = 0
-    input_data = pyshmem.get(input_ptr + offsets,
-                            cur_rank,
-                            dst_rank,
-                            heap_bases,
-                            mask)
+    input_data = pyshmem.get(input_ptr + offsets, cur_rank, dst_rank, heap_bases, mask)
 
     output_data = input_data
     # if pid == 0:
     #     print("cur_rank: ", input_data)
-    pyshmem.put(output_ptr + offsets,
-                output_data,
-                cur_rank,
-                dst_rank,
-                heap_bases,
-                mask=mask)
+    pyshmem.put(
+        output_ptr + offsets, output_data, cur_rank, dst_rank, heap_bases, mask=mask
+    )
 
 
 def main():
@@ -76,11 +69,9 @@ def main():
     n_elements = output_data.numel()
     grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
-    copy_kernel[grid](input_data,
-                      output_data,
-                      n_elements,
-                      heap_bases,
-                      BLOCK_SIZE=block_size)
+    copy_kernel[grid](
+        input_data, output_data, n_elements, heap_bases, BLOCK_SIZE=block_size
+    )
 
     torch.cuda.synchronize()
     print(f"expected: {input_data}")
@@ -90,5 +81,6 @@ def main():
         f"{torch.max(torch.abs(input_data - output_data))}"
     )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

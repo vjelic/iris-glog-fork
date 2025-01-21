@@ -23,13 +23,12 @@ LOGGING = True
 
 
 class pyrocSHMEM:
-    def __init__(self, heap_size = 1 << 30):
+    def __init__(self, heap_size=1 << 30):
         comm, cur_rank, num_ranks = init_mpi()
         num_gpus = count_devices()
 
         gpu_id = cur_rank % num_gpus
         set_device(gpu_id)
-
 
         self.comm = comm
         self.num_ranks = num_ranks
@@ -39,8 +38,7 @@ class pyrocSHMEM:
         self.heap_offset = 0
         self.alignment = 1024
         self.device = f"cuda:{gpu_id}"
-        self.memory_pool = torch.empty(heap_size, device=self.device,
-                                       dtype=torch.int8)
+        self.memory_pool = torch.empty(heap_size, device=self.device, dtype=torch.int8)
 
         heap_base = self.memory_pool.data_ptr()
         heap_base_ptr = ctypes.c_void_p(heap_base)
@@ -56,7 +54,9 @@ class pyrocSHMEM:
         world_barrier()
 
         all_ipc_handles = mpi_allgather(np.frombuffer(ipc_handle, dtype=np.uint8))
-        all_heap_bases = mpi_allgather(np.array([heap_bases[cur_rank]], dtype=np.uint64))
+        all_heap_bases = mpi_allgather(
+            np.array([heap_bases[cur_rank]], dtype=np.uint64)
+        )
 
         world_barrier()
 
@@ -74,12 +74,10 @@ class pyrocSHMEM:
 
         world_barrier()
         self.heap_bases = torch.from_numpy(ipc_heap_bases).to(
-                            device=self.device,
-                            dtype=torch.uint64)
+            device=self.device, dtype=torch.uint64
+        )
 
         world_barrier()
-
-
 
     def log(self, message):
         if LOGGING:
@@ -149,7 +147,9 @@ class pyrocSHMEM:
         return tensor
 
     def linspace(self, start, end, steps, dtype=torch.float):
-        self.log(f"linspace: start = {start}, end = {end}, steps = {steps}, dtype = {dtype}")
+        self.log(
+            f"linspace: start = {start}, end = {end}, steps = {steps}, dtype = {dtype}"
+        )
         tensor = self.allocate(num_elements=steps, dtype=dtype)
         torch.linspace(start, end, steps, out=tensor)
         return tensor
@@ -174,8 +174,9 @@ class pyrocSHMEM:
     def get_num_ranks(self):
         return self.num_ranks
 
+
 @triton.jit
-def translate(src_ptr, cur_rank, target_rank, heap_bases, debug = False):
+def translate(src_ptr, cur_rank, target_rank, heap_bases, debug=False):
     src_base = tl.load(heap_bases + cur_rank)
     dst_base = tl.load(heap_bases + target_rank)
     # convert to int to compute difference
@@ -203,49 +204,46 @@ def translate(src_ptr, cur_rank, target_rank, heap_bases, debug = False):
 @triton.jit
 def get(src_ptr, cur_rank, target_rank, heap_bases, mask=None):
 
-    dst_ptr = translate(src_ptr, cur_rank,
-                        target_rank, heap_bases)
+    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases)
 
     result = tl.load(dst_ptr, mask=mask)
     return result
 
+
 @triton.jit
 def put(src_ptr, data, cur_rank, target_rank, heap_bases, mask=None):
     dtype_size = 4
-    dst_ptr = translate(src_ptr, cur_rank,
-                        target_rank, heap_bases,
-                        False)
+    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
     tl.store(dst_ptr, data, mask=mask)
 
+
 @triton.jit
-def atomic_add(src_ptr, data, cur_rank, target_rank,
-               heap_bases, mask=None, sem=None, scope=None):
-    dst_ptr = translate(src_ptr, cur_rank,
-                        target_rank, heap_bases,
-                        False)
+def atomic_add(
+    src_ptr, data, cur_rank, target_rank, heap_bases, mask=None, sem=None, scope=None
+):
+    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
     tl.atomic_add(dst_ptr, data, mask=mask, sem=sem, scope=scope)
 
+
 @triton.jit
-def atomic_sub(src_ptr, data, cur_rank, target_rank,
-               heap_bases, mask=None, sem=None, scope=None):
-    dst_ptr = translate(src_ptr, cur_rank,
-                        target_rank, heap_bases,
-                        False)
+def atomic_sub(
+    src_ptr, data, cur_rank, target_rank, heap_bases, mask=None, sem=None, scope=None
+):
+    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
     tl.atomic_sub(dst_ptr, data, mask=mask, sem=sem, scope=scope)
 
+
 @triton.jit
-def atomic_cas(src_ptr, compare, value, cur_rank, target_rank,
-               heap_bases, sem=None, scope=None):
-    dst_ptr = translate(src_ptr, cur_rank,
-                        target_rank, heap_bases,
-                        False)
+def atomic_cas(
+    src_ptr, compare, value, cur_rank, target_rank, heap_bases, sem=None, scope=None
+):
+    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
     return tl.atomic_cas(dst_ptr, compare, value, sem=sem, scope=scope)
 
-@triton.jit
-def atomic_xchg(src_ptr, value, cur_rank, target_rank,
-               heap_bases, mask=None, sem=None, scope=None):
-    dst_ptr = translate(src_ptr, cur_rank,
-                        target_rank, heap_bases,
-                        False)
-    return tl.atomic_xchg(dst_ptr, value, mask=mask, sem=sem, scope=scope)
 
+@triton.jit
+def atomic_xchg(
+    src_ptr, value, cur_rank, target_rank, heap_bases, mask=None, sem=None, scope=None
+):
+    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
+    return tl.atomic_xchg(dst_ptr, value, mask=mask, sem=sem, scope=scope)

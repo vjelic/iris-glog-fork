@@ -42,15 +42,16 @@ def producer_kernel(
     if pid == 0:
         # Why doesn't CAS  take mask?
         # Is this a scalar operation? one per block?
-        pyshmem.atomic_cas(flag_ptr,
-                             0, # compare
-                             1, # value
-                             cur_rank,
-                             to_rank,
-                             heap_bases,
-                             sem = "release",
-                             scope = "sys"
-                             )
+        pyshmem.atomic_cas(
+            flag_ptr,
+            0,  # compare
+            1,  # value
+            cur_rank,
+            to_rank,
+            heap_bases,
+            sem="release",
+            scope="sys",
+        )
 
 
 @triton.jit
@@ -72,18 +73,18 @@ def consumer_kernel(
     # Is this a single CAS per block?
     result = 0
     while result == 0:
-        result = pyshmem.atomic_cas(flag_ptr,
-                                    1, # compare
-                                    0, # value
-                                    cur_rank,
-                                    cur_rank,
-                                    heap_bases,
-                                    sem = "acquire",
-                                    scope = "sys"
-                                    )
+        result = pyshmem.atomic_cas(
+            flag_ptr,
+            1,  # compare
+            0,  # value
+            cur_rank,
+            cur_rank,
+            heap_bases,
+            sem="acquire",
+            scope="sys",
+        )
         pass
         # print("result: ", result)
-
 
     # Consume data (read from output)
     output_data = pyshmem.get(
@@ -114,7 +115,9 @@ def main():
 
     # Check if the number of ranks is 2
     if num_ranks != 2:
-        raise RuntimeError(f"This program requires exactly 2 ranks, but {num_ranks} were found.")
+        raise RuntimeError(
+            f"This program requires exactly 2 ranks, but {num_ranks} were found."
+        )
 
     torch.manual_seed(0)
     size = 128  # Should deadlock if we use more than 1 block.
@@ -179,6 +182,7 @@ def main():
     shmem.barrier()
 
     shmem.log(f"Flag: {flag}")
+
 
 if __name__ == "__main__":
     main()

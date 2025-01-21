@@ -2,9 +2,10 @@ import ctypes
 import numpy as np
 import sys
 
-rt_path="libamdhip64.so"
+rt_path = "libamdhip64.so"
 # rt_path="/work1/amd/muhaawad/git/amd/pdp/fused_gemm/hipShim/libhip_shim.so"
 hip_runtime = ctypes.cdll.LoadLibrary(rt_path)
+
 
 def hip_try(err):
     if err != 0:
@@ -12,8 +13,10 @@ def hip_try(err):
         error_string = hip_runtime.hipGetErrorString(ctypes.c_int(err)).decode("utf-8")
         raise RuntimeError(f"HIP error code {err}: {error_string}")
 
+
 class hipIpcMemHandle_t(ctypes.Structure):
     _fields_ = [("reserved", ctypes.c_char * 64)]
+
 
 def open_ipc_handle(ipc_handle_data, rank):
     ptr = ctypes.c_void_p()
@@ -54,6 +57,7 @@ def get_ipc_handle(ptr, rank):
     ipc_handle = hipIpcMemHandle_t()
     hip_try(hip_runtime.hipIpcGetMemHandle(ctypes.byref(ipc_handle), ptr))
     return ipc_handle
+
 
 def count_devices():
     device_count = ctypes.c_int()

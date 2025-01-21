@@ -51,7 +51,9 @@ def main():
 
     # Check if the number of ranks is 2
     if num_ranks != 2:
-        raise RuntimeError(f"This program requires exactly 2 ranks, but {num_ranks} were found.")
+        raise RuntimeError(
+            f"This program requires exactly 2 ranks, but {num_ranks} were found."
+        )
 
     torch.manual_seed(0)
     size = 2
@@ -99,7 +101,6 @@ def main():
     # Sync the world
     shmem.barrier()
 
-
     if cur_rank == 1:
         # Rank 1 receives data
         shmem.log(
@@ -109,11 +110,12 @@ def main():
         shmem.log(f"expected: {input_data}")
         shmem.log(f"output  : {output_data}")
 
-
     torch.cuda.synchronize()
     shmem.barrier()
     # shmem.log(f"expected: {input_data}")
     if cur_rank == 1:
         shmem.log(f"output  : {output_data}")
+
+
 if __name__ == "__main__":
     main()
