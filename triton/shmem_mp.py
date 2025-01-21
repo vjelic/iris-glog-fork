@@ -20,18 +20,11 @@ def producer_kernel(
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
 
-    # Produce data (copy from input to output)
-    input_data = pyshmem.get(
-        input_ptr + offsets,
-        cur_rank,
-        cur_rank,
-        heap_bases,
-        mask,
-    )
-    output_data = input_data
+    # Produce data (store into input)
+    input_data = offsets
     pyshmem.put(
-        output_ptr + offsets,
-        output_data,
+        input_ptr + offsets,
+        input_data,
         cur_rank,
         to_rank,
         heap_bases,
@@ -42,10 +35,12 @@ def producer_kernel(
     if pid == 0:
         # Why doesn't CAS  take mask?
         # Is this a scalar operation? one per block?
+        compare = 0
+        value = 1
         pyshmem.atomic_cas(
             flag_ptr,
-            0,  # compare
-            1,  # value
+            compare,
+            value,
             cur_rank,
             to_rank,
             heap_bases,
@@ -56,6 +51,7 @@ def producer_kernel(
 
 @triton.jit
 def consumer_kernel(
+    input_ptr,
     output_ptr,
     flag_ptr,
     n_elements,
@@ -73,10 +69,12 @@ def consumer_kernel(
     # Is this a single CAS per block?
     result = 0
     while result == 0:
+        compare = 1
+        value = 0
         result = pyshmem.atomic_cas(
             flag_ptr,
-            1,  # compare
-            0,  # value
+            compare,
+            value,
             cur_rank,
             cur_rank,
             heap_bases,
@@ -84,12 +82,11 @@ def consumer_kernel(
             scope="sys",
         )
         pass
-        # print("result: ", result)
 
-    # Consume data (read from output)
+    # Consume data (read from input and store into output)
     output_data = pyshmem.get(
-        output_ptr + offsets,
-        from_rank,
+        input_ptr + offsets,
+        cur_rank,
         cur_rank,
         heap_bases,
         mask,
@@ -97,7 +94,7 @@ def consumer_kernel(
     pyshmem.put(
         output_ptr + offsets,
         output_data,
-        from_rank,
+        cur_rank,
         cur_rank,
         heap_bases,
         mask=mask,
@@ -124,13 +121,18 @@ def main():
     block_size = 128
 
     # Allocate input, output, and flag on the symmetric heap
-    input_data = shmem.arange(size, dtype=torch.int8)
+    input_data = shmem.zeros(size, dtype=torch.int8)
     output_data = shmem.zeros_like(input_data)
     flag = shmem.zeros(1, dtype=torch.int)
 
     shmem.log(f"input_data : {input_data.data_ptr():#x}")
     shmem.log(f"output_data: {output_data.data_ptr():#x}")
     shmem.log(f"flag       : {flag.data_ptr():#x}")
+
+    shmem.log(f"Input  : {input_data}")
+    shmem.log(f"Output : {output_data}")
+
+    shmem.barrier()
 
     if cur_rank == 0:
         # Rank 0 produces data
@@ -157,6 +159,7 @@ def main():
 
         # Launch consumer kernel
         consumer_kernel[grid](
+            input_data,
             output_data,
             flag,
             n_elements,
