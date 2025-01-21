@@ -43,9 +43,6 @@ class pyrocSHMEM:
         heap_base = self.memory_pool.data_ptr()
         heap_base_ptr = ctypes.c_void_p(heap_base)
 
-        self.log(f"heap_base: {heap_base}")
-        self.log(f"type(heap_base): {type(heap_base)}")
-
         heap_bases = np.zeros(num_ranks, dtype=np.uint64)
         heap_bases[cur_rank] = heap_base
         ipc_handles = np.zeros((num_ranks, 64), dtype=np.uint8)
@@ -68,9 +65,8 @@ class pyrocSHMEM:
             else:
                 ipc_heap_bases[rank] = heap_bases[rank]
 
-        self.log(f"Rank {rank}: Collected IPC heap bases:")
         for i in range(num_ranks):
-            self.log(f"  GPU {i}: Heap base {hex(int(ipc_heap_bases[i]))}")
+            self.log(f"GPU {i}: Heap base {hex(int(ipc_heap_bases[i]))}")
 
         world_barrier()
         self.heap_bases = torch.from_numpy(ipc_heap_bases).to(
