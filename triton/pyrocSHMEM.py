@@ -175,17 +175,19 @@ class pyrocSHMEM:
         return self.num_ranks
 
 @triton.jit
-def translate(src_ptr, cur_rank, target_rank, heap_bases, dtype_size, debug = False):
+def translate(src_ptr, cur_rank, target_rank, heap_bases, debug = False):
     src_base = tl.load(heap_bases + cur_rank)
     dst_base = tl.load(heap_bases + target_rank)
-    # Cast dst_base to pointer type
-    dst_base = tl.cast(dst_base, src_ptr.dtype)
     # convert to int to compute difference
     src_ptr_int = tl.cast(src_ptr, tl.uint64)
     # Find the offset from current rank heap
-    offset = (src_ptr_int - src_base) // tl.cast(dtype_size, tl.uint64)
+    offset = src_ptr_int - src_base
+    # Byte cast for byte offset addition
+    dst_base_byte = tl.cast(dst_base, tl.pointer_type(tl.int8))
     # Find the offset into the destination heap
-    dst_ptr = dst_base + offset
+    dst_ptr_byte = dst_base_byte + offset
+    # Cast dst_base back to pointer type
+    dst_ptr = tl.cast(dst_ptr_byte, src_ptr.dtype)
 
     pid = tl.program_id(axis=0)
     if debug and pid == 0:
@@ -201,10 +203,8 @@ def translate(src_ptr, cur_rank, target_rank, heap_bases, dtype_size, debug = Fa
 @triton.jit
 def get(src_ptr, cur_rank, target_rank, heap_bases, mask=None):
 
-    dtype_size = 4
     dst_ptr = translate(src_ptr, cur_rank,
-                        target_rank, heap_bases,
-                        dtype_size)
+                        target_rank, heap_bases)
 
     result = tl.load(dst_ptr, mask=mask)
     return result
@@ -214,47 +214,38 @@ def put(src_ptr, data, cur_rank, target_rank, heap_bases, mask=None):
     dtype_size = 4
     dst_ptr = translate(src_ptr, cur_rank,
                         target_rank, heap_bases,
-                        dtype_size,
                         False)
     tl.store(dst_ptr, data, mask=mask)
 
 @triton.jit
 def atomic_add(src_ptr, data, cur_rank, target_rank,
                heap_bases, mask=None, sem=None, scope=None):
-    dtype_size = 4
     dst_ptr = translate(src_ptr, cur_rank,
                         target_rank, heap_bases,
-                        dtype_size,
                         False)
     tl.atomic_add(dst_ptr, data, mask=mask, sem=sem, scope=scope)
 
 @triton.jit
 def atomic_sub(src_ptr, data, cur_rank, target_rank,
                heap_bases, mask=None, sem=None, scope=None):
-    dtype_size = 4
     dst_ptr = translate(src_ptr, cur_rank,
                         target_rank, heap_bases,
-                        dtype_size,
                         False)
     tl.atomic_sub(dst_ptr, data, mask=mask, sem=sem, scope=scope)
 
 @triton.jit
 def atomic_cas(src_ptr, compare, value, cur_rank, target_rank,
                heap_bases, sem=None, scope=None):
-    dtype_size = 4
     dst_ptr = translate(src_ptr, cur_rank,
                         target_rank, heap_bases,
-                        dtype_size,
                         False)
     return tl.atomic_cas(dst_ptr, compare, value, sem=sem, scope=scope)
 
 @triton.jit
 def atomic_xchg(src_ptr, value, cur_rank, target_rank,
                heap_bases, mask=None, sem=None, scope=None):
-    dtype_size = 4
     dst_ptr = translate(src_ptr, cur_rank,
                         target_rank, heap_bases,
-                        dtype_size,
                         False)
     return tl.atomic_xchg(dst_ptr, value, mask=mask, sem=sem, scope=scope)
 

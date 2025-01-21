@@ -40,6 +40,8 @@ def producer_kernel(
 
     # Set the flag to signal Rank 1
     if pid == 0:
+        # Why doesn't CAS  take mask?
+        # Is this a scalar operation? one per block?
         pyshmem.atomic_cas(flag_ptr,
                              0, # compare
                              1, # value
@@ -67,16 +69,21 @@ def consumer_kernel(
     mask = offsets < n_elements
 
     # Spin until the flag is set to 1
-    while pyshmem.atomic_cas(flag_ptr,
-                             1, # compare
-                             0, # value
-                             cur_rank,
-                             cur_rank,
-                             heap_bases,
-                             sem = "acquire",
-                             scope = "sys"
-                             ) == 1:
+    # Is this a single CAS per block?
+    result = 0
+    while result == 0:
+        result = pyshmem.atomic_cas(flag_ptr,
+                                    1, # compare
+                                    0, # value
+                                    cur_rank,
+                                    cur_rank,
+                                    heap_bases,
+                                    sem = "acquire",
+                                    scope = "sys"
+                                    )
         pass
+        # print("result: ", result)
+
 
     # Consume data (read from output)
     output_data = pyshmem.get(
@@ -110,13 +117,11 @@ def main():
         raise RuntimeError(f"This program requires exactly 2 ranks, but {num_ranks} were found.")
 
     torch.manual_seed(0)
-    size = 2
-    block_size = size
-
-    size_in_bytes = torch.tensor([], dtype=torch.int).element_size()
+    size = 128  # Should deadlock if we use more than 1 block.
+    block_size = 128
 
     # Allocate input, output, and flag on the symmetric heap
-    input_data = shmem.arange(size, dtype=torch.int)
+    input_data = shmem.arange(size, dtype=torch.int8)
     output_data = shmem.zeros_like(input_data)
     flag = shmem.zeros(1, dtype=torch.int)
 
