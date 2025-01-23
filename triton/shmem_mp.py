@@ -1,14 +1,13 @@
 import torch
 import triton
 import triton.language as tl
-import pyrocSHMEM as pyshmem
 
-finegrained_allocator = torch.cuda.memory.CUDAPluggableAllocator(
-    "../pyrocSHMEM/libfinegrained_allocator.so",
-    "finegrained_hipMalloc",
-    "finegrained_hipFree",
-)
-torch.cuda.memory.change_current_allocator(finegrained_allocator)
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+
+import pyrocSHMEM as pyshmem
 
 
 @triton.jit

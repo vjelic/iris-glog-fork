@@ -1,12 +1,12 @@
 import triton
 import triton.language as tl
 
-from mpi_helpers import (
+from pyrocSHMEM._mpi_helpers import (
     init_mpi,
     mpi_allgather,
     world_barrier,
 )
-from hip import (
+from pyrocSHMEM._hip import (
     set_device,
     get_device,
     count_devices,
@@ -24,6 +24,8 @@ LOGGING = True
 
 class pyrocSHMEM:
     def __init__(self, heap_size=1 << 30):
+
+        # Initialize
         comm, cur_rank, num_ranks = init_mpi()
         num_gpus = count_devices()
 
