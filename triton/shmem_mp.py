@@ -3,6 +3,13 @@ import triton
 import triton.language as tl
 import pyrocSHMEM as pyshmem
 
+finegrained_allocator = torch.cuda.memory.CUDAPluggableAllocator(
+    "../pyrocSHMEM/libfinegrained_allocator.so",
+    "finegrained_hipMalloc",
+    "finegrained_hipFree",
+)
+torch.cuda.memory.change_current_allocator(finegrained_allocator)
+
 
 @triton.jit
 def producer_kernel(
@@ -32,21 +39,20 @@ def producer_kernel(
     )
 
     # Set the flag to signal Rank 1
-    if pid == 0:
-        # Why doesn't CAS  take mask?
-        # Is this a scalar operation? one per block?
-        compare = 0
-        value = 1
-        pyshmem.atomic_cas(
-            flag_ptr,
-            compare,
-            value,
-            cur_rank,
-            to_rank,
-            heap_bases,
-            sem="release",
-            scope="sys",
-        )
+    # Why doesn't CAS  take mask?
+    # Is this a scalar operation? one per block?
+    compare = 0
+    value = 1
+    pyshmem.atomic_cas(
+        flag_ptr + pid,
+        compare,
+        value,
+        cur_rank,
+        to_rank,
+        heap_bases,
+        sem="release",
+        scope="sys",
+    )
 
 
 @triton.jit
@@ -72,7 +78,7 @@ def consumer_kernel(
         compare = 1
         value = 0
         result = pyshmem.atomic_cas(
-            flag_ptr,
+            flag_ptr + pid,
             compare,
             value,
             cur_rank,
@@ -117,13 +123,17 @@ def main():
         )
 
     torch.manual_seed(0)
-    size = 128  # Should deadlock if we use more than 1 block.
+    n_elements = 1024
     block_size = 128
 
+    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    num_blocks = grid({"BLOCK_SIZE": block_size})[0]
+    shmem.log(f"num_blocks: {num_blocks}")
+
     # Allocate input, output, and flag on the symmetric heap
-    input_data = shmem.zeros(size, dtype=torch.int8)
+    input_data = shmem.zeros(n_elements, dtype=torch.int8)
     output_data = shmem.zeros_like(input_data)
-    flag = shmem.zeros(1, dtype=torch.int)
+    flag = shmem.zeros(num_blocks, dtype=torch.int)
 
     shmem.log(f"input_data : {input_data.data_ptr():#x}")
     shmem.log(f"output_data: {output_data.data_ptr():#x}")
@@ -134,12 +144,10 @@ def main():
 
     shmem.barrier()
 
+    heap_bases = shmem.get_heap_bases()
+
     if cur_rank == 0:
         # Rank 0 produces data
-        heap_bases = shmem.get_heap_bases()
-        n_elements = output_data.numel()
-        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
-
         # Launch producer kernel
         producer_kernel[grid](
             input_data,
@@ -153,10 +161,6 @@ def main():
         )
     elif cur_rank == 1:
         # Rank 1 consumes data
-        heap_bases = shmem.get_heap_bases()
-        n_elements = output_data.numel()
-        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
-
         # Launch consumer kernel
         consumer_kernel[grid](
             input_data,
@@ -188,4 +192,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    num_iters = 32
+    for i in range(num_iters):
+        main()

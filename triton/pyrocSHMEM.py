@@ -199,16 +199,13 @@ def translate(src_ptr, cur_rank, target_rank, heap_bases, debug=False):
 
 @triton.jit
 def get(src_ptr, cur_rank, target_rank, heap_bases, mask=None):
-
     dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases)
-
     result = tl.load(dst_ptr, mask=mask)
     return result
 
 
 @triton.jit
 def put(src_ptr, data, cur_rank, target_rank, heap_bases, mask=None):
-    dtype_size = 4
     dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
     tl.store(dst_ptr, data, mask=mask)
 
