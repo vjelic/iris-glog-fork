@@ -13,10 +13,10 @@ hipcc -fgpu-rdc --hip-link rocshmem_allreduce_test.o -o rocshmem_allreduce_test
 ROCSHMEM_MAX_NUM_CONTEXTS=2 mpirun -np 8 ./rocshmem_allreduce_test
 */
 
-#include <iostream>
-
 #include <hip/hip_runtime.h>
 #include <hip/hip_runtime_api.h>
+
+#include <iostream>
 #include <rocshmem/rocshmem.hpp>
 
 #define CHECK_HIP(condition)                                        \
@@ -30,9 +30,7 @@ ROCSHMEM_MAX_NUM_CONTEXTS=2 mpirun -np 8 ./rocshmem_allreduce_test
 
 using namespace rocshmem;
 
-__global__ void allreduce_test(int* source,
-                               int* dest,
-                               size_t nelem,
+__global__ void allreduce_test(int* source, int* dest, size_t nelem,
                                rocshmem_team_t team) {
   __shared__ rocshmem_ctx_t ctx;
   int64_t ctx_type = 0;

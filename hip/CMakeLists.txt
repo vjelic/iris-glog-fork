@@ -2,14 +2,23 @@ cmake_minimum_required(VERSION 3.10)
 project(FindROCShmemExample LANGUAGES CXX HIP)
 
 # Set paths for rocSHMEM manually
-set(ROCSHMEM_INCLUDE_DIR "/home1/muhaawad/rocm/rocshmem/include")
-set(ROCSHMEM_LIBRARY "/home1/muhaawad/rocm/rocshmem/lib/librocshmem.so")
+# set(ROCSHMEM_INCLUDE_DIR "/home1/muhaawad/rocm/rocshmem/include")
+# set(ROCSHMEM_LIBRARY "/home1/muhaawad/rocm/rocshmem/lib/librocshmem.so")
 
 # Define a custom target for rocSHMEM
-add_library(rocshmem INTERFACE)
-target_include_directories(rocshmem INTERFACE ${ROCSHMEM_INCLUDE_DIR})
-target_link_libraries(rocshmem INTERFACE ${ROCSHMEM_LIBRARY})
-add_library(rocshmem::rocshmem ALIAS rocshmem)
+# add_library(rocshmem INTERFACE)
+# target_include_directories(rocshmem INTERFACE ${ROCSHMEM_INCLUDE_DIR})
+# target_link_libraries(rocshmem INTERFACE ${ROCSHMEM_LIBRARY})
+# add_library(rocshmem::rocshmem ALIAS rocshmem)
+
+# set(CMAKE_FIND_DEBUG_MODE TRUE)
+find_package(rocshmem REQUIRED)
+
+# Check and print variables defined by the package
+message(STATUS "rocshmem_FOUND: ${rocshmem_FOUND}")
+message(STATUS "rocshmem_VERSION: ${rocshmem_VERSION}")
+message(STATUS "rocshmem_INCLUDE_DIRS: ${rocshmem_INCLUDE_DIRS}")
+message(STATUS "rocshmem_LIBRARIES: ${rocshmem_LIBRARIES}")
 
 
 # Find HIP
@@ -38,10 +47,7 @@ set_target_properties(${EXECUTABLE_NAME} PROPERTIES HIP_ARCHITECTURES gfx90a)
 target_link_libraries(
     ${EXECUTABLE_NAME}
     PRIVATE
-      rocshmem::rocshmem
-      hsa-runtime64
-      hip::device
-      MPI::MPI_CXX
+      roc::rocshmem
 )
 
 # Add compile and link flags
