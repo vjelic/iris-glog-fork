@@ -10,6 +10,7 @@ def persistent_gemm(
     bias_ptr,
     P,
     locks,
+    tile_completed,
     M,
     N,
     K,
