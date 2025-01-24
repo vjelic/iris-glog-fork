@@ -97,6 +97,12 @@ class pyrocSHMEM:
         sub_buffer = self.memory_pool[start : start + size_in_bytes].view(dtype)
         return sub_buffer.reshape((num_elements,))
 
+    def parse_size(self, size):
+        if len(size) == 1 and isinstance(size[0], (tuple, list)):
+            size = size[0]
+        num_elements = math.prod(size)
+        return size, num_elements
+
     def zeros_like(self, tensor):
         dtype = tensor.dtype
         num_elements = tensor.numel()
@@ -104,53 +110,79 @@ class pyrocSHMEM:
         new_tensor.zero_()
         return new_tensor
 
-    def arange(self, size, dtype=torch.int):
+    def arange(self, *size, dtype=torch.int):
         self.log(f"arange: size = {size}, dtype = {dtype}")
-        tensor = self.allocate(num_elements=size, dtype=dtype)
-        tensor[:] = torch.arange(size, device="cuda", dtype=dtype)
-        return tensor
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
+        tensor[:] = torch.arange(num_elements, device="cuda", dtype=dtype)
+        return tensor.reshape(size)
 
-    def zeros(self, size, dtype=torch.int):
-        self.log(f"zeros: size = {size}, dtype = {dtype}")
-        tensor = self.allocate(num_elements=size, dtype=dtype)
+
+    def zeros(self, *size, dtype=torch.int, device=None, requires_grad=False, **kwargs):
+        self.log(f"zeros: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}")
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.zero_()
-        return tensor
+        if requires_grad:
+            tensor.requires_grad_()
+        return tensor.reshape(size)
 
-    def ones(self, size, dtype=torch.int):
+
+    def randn(self, *size, generator=None, dtype=torch.float, layout=torch.strided, device=None, requires_grad=False, pin_memory=False):
+        self.log(f"randn: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}, pin_memory = {pin_memory}")
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
+        random_data = torch.randn(num_elements, generator=generator, dtype=dtype, device=device, layout=layout)
+        tensor.copy_(random_data)
+        if requires_grad:
+            tensor.requires_grad_()
+        return tensor.reshape(size)
+
+
+    def ones(self, *size, dtype=torch.int):
         self.log(f"ones: size = {size}, dtype = {dtype}")
-        tensor = self.allocate(num_elements=size, dtype=dtype)
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.fill_(1)
-        return tensor
+        return tensor.reshape(size)
 
     def full(self, size, fill_value, dtype=torch.int):
         self.log(f"full: size = {size}, fill_value = {fill_value}, dtype = {dtype}")
-        tensor = self.allocate(num_elements=size, dtype=dtype)
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.fill_(fill_value)
-        return tensor
+        return tensor.reshape(size)
 
     def uniform(self, size, low=0.0, high=1.0, dtype=torch.float):
         self.log(f"uniform: size = {size}, low = {low}, high = {high}, dtype = {dtype}")
-        tensor = self.allocate(num_elements=size, dtype=dtype)
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.uniform_(low, high)
-        return tensor
+        return tensor.reshape(size)
+
 
     def empty(self, size, dtype=torch.float):
         self.log(f"empty: size = {size}, dtype = {dtype}")
-        return self.allocate(num_elements=size, dtype=dtype)
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
+        return tensor.reshape(size)
 
     def randint(self, size, low, high, dtype=torch.int):
         self.log(f"randint: size = {size}, low = {low}, high = {high}, dtype = {dtype}")
-        tensor = self.allocate(num_elements=size, dtype=dtype)
-        tensor[:] = torch.randint(low, high, (size,), device="cuda", dtype=dtype)
-        return tensor
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
+        tensor[:] = torch.randint(low, high, size, device="cuda", dtype=dtype)
+        return tensor.reshape(size)
+
 
     def linspace(self, start, end, steps, dtype=torch.float):
         self.log(
             f"linspace: start = {start}, end = {end}, steps = {steps}, dtype = {dtype}"
         )
-        tensor = self.allocate(num_elements=steps, dtype=dtype)
+        size, num_elements = self.parse_size(size)
+        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         torch.linspace(start, end, steps, out=tensor)
-        return tensor
+        return tensor.reshape(size)
 
     def deallocate(self, pointer):
         pass
