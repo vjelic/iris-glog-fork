@@ -160,6 +160,8 @@ def reduction_kernel(
             M_local, N_local
         )
         offset = rm[:, None] * stride_cm_local + rn[None, :] * stride_cn_local
+        
+        # Tile communication differently than 
         data = tl.load(local_C_partial_ptr + offset, mask=mask)
 
         # Store

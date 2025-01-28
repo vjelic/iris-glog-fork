@@ -194,31 +194,8 @@ def reduction_kernel(
 
         # Store
         for remote_rank in range(world_size):
-            # if (cur_rank == 0 and remote_rank == 0) and (global_tile_id == 0):
             if True:
-            # if (cur_rank != remote_rank):
-                # rm, rn, store_mask = offset_for_tile(
-                #                     global_tile_id,
-                #                     BLOCK_SIZE_M_local,
-                #                     BLOCK_SIZE_N_local,
-                #                     GROUP_SIZE_M_global,
-                #                     M_global, N_global)
-                # # offset_global = rm[:, None] * stride_cm_global + rn[None, :] * stride_cn_global
-                # offset_global = rm[:, None] * stride_cn_global + rn[None, :] * stride_cm_global
-
-                # print("offset_global: ", offset_global)
-                # for i in offset_global:
-                #     print(i)
-                # print("store_mask: ", store_mask)
-                # for i in store_mask:
-                #     print(i)
-                # print("rank, tile, gtile", cur_rank, tile, global_tile_id)
-                # print("put", local_C_ptr + output_offset, data)
-                # output_offset=offset_global
-                # print("stride_cm_global:", stride_cm_global)
-                # print("stride_cn_global:", stride_cn_global)
-                # print("rank, offset, mask", cur_rank, offset_global, store_mask)
-                pyshmem.put(
+                 pyshmem.put(
                     local_C_ptr + offset_global,
                     data,
                     cur_rank,
@@ -466,7 +443,7 @@ mfmaInstrSize = 16
 kpack = 2
 
 communication_sms =2
-margin = 8
+margin = 0
 streamk_sms = total_sm - communication_sms - margin
 
 # communication_sms = 16
