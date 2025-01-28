@@ -4,7 +4,8 @@ import random
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
-import pyrocSHMEM as pyshmem
+import triton.language as tl
+import torch.distributed as dist
 
 
 # from streamk_kernel import streamk_gemm
@@ -39,7 +40,6 @@ class matmul(torch.autograd.Function):
         bias: torch.Tensor,
         P: torch.Tensor,
         locks: torch.Tensor,
-        tile_completed: torch.Tensor,
         total_programs_streamk: int,
         BLK_M: int,
         BLK_N: int,
@@ -107,7 +107,6 @@ class matmul(torch.autograd.Function):
             bias,
             P,
             locks,
-            tile_completed,
             M,
             N,
             K,
@@ -150,7 +149,6 @@ class matmul(torch.autograd.Function):
         bias: torch.Tensor,
         P: torch.Tensor,
         locks: torch.Tensor,
-        tile_completed: torch.Tensor,
         grid: int,
         BLK_M=128,
         BLK_N=128,
@@ -170,7 +168,6 @@ class matmul(torch.autograd.Function):
             bias=bias,
             P=P,
             locks=locks,
-            tile_completed=tile_completed,
             total_programs_streamk=grid,
             BLK_M=BLK_M,
             BLK_N=BLK_N,
@@ -214,15 +211,31 @@ m, n, k = 8192, 8192, 8192  # some problem size to test
 ## test when k is not multiple of 16
 # m, n, k = 4864, 4096, 4300
 
-heap_size = 1 << 30
-shmem = pyshmem.pyrocSHMEM(heap_size)
-    
-A = shmem.randn(m, k, device="cuda", dtype=torch.float16)
-B = shmem.randn(n, k, device="cuda", dtype=torch.float16).T
+dist.init_process_group(backend="nccl", init_method="env://")
+rank = dist.get_rank()
+world_size = dist.get_world_size()
+torch.cuda.set_device(rank)
+print(f"Starting distributed GEMM on Rank {rank} of {world_size} on device cuda:{rank}")
+
+
+A = torch.randn(m, k, device="cuda", dtype=torch.float16)
+B = torch.randn(n, k, device="cuda", dtype=torch.float16).T
 # allocates output
-C = shmem.zeros((m, n), device="cuda", dtype=A.dtype)
-bias = shmem.zeros((m,), device="cuda", dtype=A.dtype)
-# bias = None
+C = torch.zeros((m, n), device="cuda", dtype=A.dtype)
+
+M = m
+N = n
+K = k
+n = n // world_size
+
+assert N % world_size == 0, "N must be divisible by world size."
+
+# Partition the weights matrix B across ranks (column-wise)
+local_B = B[:, rank * n:(rank + 1) * n].clone()
+local_C_partial = torch.zeros((m, n), device="cuda", dtype=A.dtype)
+
+# bias = torch.zeros((m,), device="cuda", dtype=A.dtype)
+bias = None
 BLK_M = 256
 BLK_N = 256
 BLK_K = 64
@@ -237,20 +250,21 @@ waves_per_eu = 0
 mfmaInstrSize = 16
 kpack = 2
 
-print(f"{total_sm=}")
+communication_sms = 1
+streamk_sms = total_sm - communication_sms
+
+print(f"{streamk_sms=}")
 matmul.set_debug(True)
-locks = shmem.zeros((total_sm,), device="cuda", dtype=torch.int32)
-tile_completed = shmem.zeros((total_sm,), device="cuda", dtype=torch.int32)
-P = shmem.zeros((total_sm, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
-C = matmul.apply(
+locks = torch.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
+P = torch.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
+local_C_partial = matmul.apply(
     A,
-    B,
-    C,
+    local_B,
+    local_C_partial,
     bias,
     P,
     locks,
-    tile_completed,
-    total_sm,
+    streamk_sms,
     BLK_M,
     BLK_N,
     BLK_K,
@@ -262,22 +276,34 @@ C = matmul.apply(
     mfmaInstrSize,
     kpack,
 )
+
+torch.cuda.synchronize()
+
+# Reduction kernel
+local_C = torch.zeros(M, N, dtype=C.dtype).cuda()
+local_C[:, rank * n:(rank + 1) * n] = local_C_partial
+dist.all_reduce(local_C, op=dist.ReduceOp.SUM)
+
+torch.cuda.synchronize()
+dist.destroy_process_group()
+
+print(f"{total_tiles=}")
+
 # exit(0)
 matmul.set_debug(False)
 expected = A @ B
 
-assert torch.allclose(C, expected, atol=1), f"max: {(C - expected).abs().max().item()}\n{C}\n{expected}"
+assert torch.allclose(local_C, expected, atol=1), f"max: {(local_C - expected).abs().max().item()}\n{C}\n{expected}"
 print("pass validation test")
 
 # for debugging, uncomment the following line
-# exit(0)
+exit(0)
 
 triton_ms = triton.testing.do_bench(lambda: torch.matmul(A, B))
 print(f"PyTorch: {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
 
-locks = shmem.zeros((total_sm,), device="cuda", dtype=torch.int32)
-tile_completed = shmem.zeros((total_sm,), device="cuda", dtype=torch.int32)
-P = shmem.zeros((total_sm, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
+locks = torch.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
+P = torch.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 triton_ms = triton.testing.do_bench(
     lambda: matmul.apply(
         A,
@@ -286,8 +312,7 @@ triton_ms = triton.testing.do_bench(
         bias,
         P,
         locks,
-        tile_completed,
-        total_sm,
+        streamk_sms,
         BLK_M,
         BLK_N,
         BLK_K,
@@ -301,11 +326,11 @@ triton_ms = triton.testing.do_bench(
     )
 )
 print(
-    f"hybrid stream-k (grid={total_sm}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
+    f"hybrid stream-k (grid={streamk_sms}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
 )
 
-# locks = shmem.zeros((total_sm * 2,), device="cuda", dtype=torch.int32)
-# P = shmem.zeros((total_sm * 2, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
+# locks = torch.zeros((streamk_sms * 2,), device="cuda", dtype=torch.int32)
+# P = torch.zeros((streamk_sms * 2, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 # triton_ms = triton.testing.do_bench(
 #     lambda: matmul.apply(
 #         A,
@@ -314,7 +339,7 @@ print(
 #         bias,
 #         P,
 #         locks,
-#         total_sm * 2,
+#         streamk_sms * 2,
 #         BLK_M,
 #         BLK_N,
 #         BLK_K,
@@ -328,7 +353,7 @@ print(
 #     )
 # )
 # print(
-#     f"hybrid stream-k (grid={total_sm * 2}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
+#     f"hybrid stream-k (grid={streamk_sms * 2}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
 # )
 
 # triton_ms = triton.testing.do_bench(

@@ -4,3 +4,7 @@ rocSHMEM/
 .vscode/
 __pycache__/
 *.so
+*.json
+*.proto
+*.pftrace
+*.log
