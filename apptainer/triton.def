@@ -11,6 +11,8 @@ From: rocm/pytorch:latest-release
     git clone https://github.com/triton-lang/triton.git \$TRITON_PATH
     cd \$TRITON_PATH
     pip install -e python
+    wget https://github.com/ROCm/rocprofiler-systems/releases/latest/download/rocprofiler-systems-install.py
+    python3 ./rocprofiler-systems-install.py --prefix /opt/rocprofiler-systems --rocm 6.3
     "
 
 %environment
