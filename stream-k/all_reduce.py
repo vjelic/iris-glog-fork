@@ -84,31 +84,23 @@ def reduction_kernel(
     heap_bases,
     M_local,
     N_local,
-    K_local,
-    stride_am_local,
-    stride_ak_local,
-    stride_bk_local,
-    stride_bn_local,
     stride_cm_local,
     stride_cn_local,
-    stride_am_global,
-    stride_ak_global,
-    stride_bk_global,
-    stride_bn_global,
-    stride_cm_global,
-    stride_cn_global,
-    BLOCK_SIZE_M_local: tl.constexpr,
-    BLOCK_SIZE_N_local: tl.constexpr,
-    BLOCK_SIZE_K_local: tl.constexpr,
-    GROUP_SIZE_M_global: tl.constexpr,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    GROUP_SIZE_M: tl.constexpr,
     total_tiles: tl.constexpr,
     cur_rank: tl.constexpr,
     world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
     pid = tl.program_id(axis=0)
+    
+    # TODO: Parallel over PIDs.
     if pid != 0:
         return
+    
+    # TODO: Match producer loop
     for tile in range(total_tiles):
         result = 0
         while result == 0:
@@ -124,9 +116,10 @@ def reduction_kernel(
                 sem="acquire",
                 scope="sys",
             )
+            
         # Consume the tile
         rm, rn, mask = offset_for_tile(
-            tile, BLOCK_SIZE_M_local, BLOCK_SIZE_N_local, GROUP_SIZE_M_global,
+            tile, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M,
             M_local, N_local
         )
         offset = rm[:, None] * stride_cm_local + rn[None, :] * stride_cn_local
@@ -177,7 +170,7 @@ class matmul(torch.autograd.Function):
         kpack: int,
     ):
 
-        #        assert a.is_contiguous() and b.is_contiguous(), "non-contiguous inputs are not supported"
+        # assert a.is_contiguous() and b.is_contiguous(), "non-contiguous inputs are not supported"
         # checks constraints
         assert a.shape[1] == b.shape[0], "incompatible dimensions"
         M, K = a.shape
@@ -335,13 +328,13 @@ perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
 ## sizes that have to do masked load/store
 # m, n, k = 8133, 8132, 8172  # some problem size to test
 # m, n, k = 8128, 6878, 7378  # some problem size to test
-# m, n, k = 6912, 768, 256  # some problem size to test
+m, n, k = 6912, 768, 256  # some problem size to test
 # m, n, k = 5632, 6656, 7936
 
 ## test when k is not multiple of 16
 # m, n, k = 4864, 4096, 4300
 
-m, n, k = 128,128,128
+# m, n, k = 128,128,128
 # m, n, k = 2,2,2
 
 heap_size = 1 << 30
@@ -390,14 +383,13 @@ waves_per_eu = 0
 mfmaInstrSize = 16
 kpack = 2
 
-communication_sms =2
-margin = 8
-streamk_sms = total_sm - communication_sms - margin
+communication_sms = 2
+streamk_sms = total_sm - communication_sms
 
-# communication_sms = 16
-# streamk_sms = 16
 
 shmem.log(f"{streamk_sms=}")
+shmem.log(f"{communication_sms=}")
+
 matmul.set_debug(True)
 locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
 tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
@@ -441,17 +433,11 @@ for exp in range(num_experiments):
     # Reduction kernel
     communication_block_size = 128
     communication_num_threads = communication_block_size * communication_sms
-    # communication_num_threads=8
     grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
 
     # Reduction kernel
-    # local_C[:, rank * n:(rank + 1) * n] = local_C_partial
-    # for index, t in enumerate(tile_completed):
-    #     print(f"Index {index}: {t}")
-    # shmem.log("Launching Reduction")
     torch.cuda.nvtx.range_pop()
     torch.cuda.nvtx.range_push(f"Communication {exp}")
-    # torch.cuda.synchronize()
     with torch.cuda.stream(comm_stream):
         reduction_kernel[grid](
             local_C,
@@ -460,22 +446,10 @@ for exp in range(num_experiments):
             shmem.get_heap_bases(),
             m,
             n,
-            k,
-            A.stride(0),
-            A.stride(1),
-            local_B.stride(0),
-            local_B.stride(1),
             local_C.stride(0),
             local_C.stride(1),
-            A.stride(0),
-            A.stride(1),
-            B.stride(0),
-            B.stride(1),
-            C.stride(0),
-            C.stride(1),
             BLK_M,
             BLK_N,
-            BLK_K,
             gsize_m,
             total_tiles,
             rank,
@@ -520,89 +494,4 @@ assert torch.allclose(global_C, expected, atol=1), f"max: {(global_C - expected)
 shmem.barrier()
 shmem.log("pass validation test")
 
-# for debugging, uncomment the following line
 exit(0)
-
-triton_ms = triton.testing.do_bench(lambda: torch.matmul(A, B))
-shmem.log(f"PyTorch: {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
-
-# locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
-# tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
-# P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
-# triton_ms = triton.testing.do_bench(
-#     lambda: matmul.apply(
-#         A,
-#         B,
-#         C,
-#         bias,
-#         P,
-#         locks,
-#         tile_completed,
-#         streamk_sms,
-#         BLK_M,
-#         BLK_N,
-#         BLK_K,
-#         gsize_m,
-#         two_tiles,
-#         num_stages,
-#         num_warps,
-#         waves_per_eu,
-#         mfmaInstrSize,
-#         kpack,
-#     )
-# )
-# print(
-#     f"hybrid stream-k (grid={streamk_sms}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
-# )
-
-# locks = shmem.zeros((streamk_sms * 2,), device="cuda", dtype=torch.int32)
-# P = shmem.zeros((streamk_sms * 2, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
-# triton_ms = triton.testing.do_bench(
-#     lambda: matmul.apply(
-#         A,
-#         B,
-#         C,
-#         bias,
-#         P,
-#         locks,
-#         streamk_sms * 2,
-#         BLK_M,
-#         BLK_N,
-#         BLK_K,
-#         gsize_m,
-#         two_tiles,
-#         num_stages,
-#         num_warps,
-#         waves_per_eu,
-#         mfmaInstrSize,
-#         kpack,
-#     )
-# )
-# print(
-#     f"hybrid stream-k (grid={streamk_sms * 2}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
-# )
-
-# triton_ms = triton.testing.do_bench(
-#     lambda: matmul.apply(
-#         A,
-#         B,
-#         C,
-#         bias,
-#         P,
-#         locks,
-#         total_tiles,
-#         BLK_M,
-#         BLK_N,
-#         BLK_K,
-#         gsize_m,
-#         two_tiles,
-#         num_stages,
-#         num_warps,
-#         waves_per_eu,
-#         mfmaInstrSize,
-#         kpack,
-#     )
-# )
-# print(
-#     f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
-# )

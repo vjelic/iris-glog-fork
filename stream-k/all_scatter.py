@@ -3,14 +3,15 @@ import triton
 import random
 import sys
 import os
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+import pyrocSHMEM as pyshmem
 import triton.language as tl
-import torch.distributed as dist
 
 
 # from streamk_kernel import streamk_gemm
 # from streamk_kernel_atomic import streamk_gemm
-from persistent_gemm import persistent_gemm
+from gemm import persistent_gemm
 
 torch.manual_seed(123)
 random.seed(123)
@@ -21,7 +22,118 @@ gpu = "mi250"
 total_sm = 304 if gpu == "mi300" else 104
 num_xcds = 8 if gpu == "mi300" else 1
 gemm_kernel = persistent_gemm
-print(f"total SMs: {total_sm}")
+
+
+@triton.jit
+def tile_id_to_index_range(
+    tile_id,
+    M,
+    N,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    GROUP_SIZE_M: tl.constexpr,
+):
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+
+    group_id = tile_id // num_pid_in_group
+    first_pid_m = group_id * GROUP_SIZE_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+
+    pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
+    pid_n = (tile_id % num_pid_in_group) // group_size_m
+
+    rm = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
+    rn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
+
+    rm = tl.max_contiguous(tl.multiple_of(rm, BLOCK_SIZE_M), BLOCK_SIZE_M)
+    rn = tl.max_contiguous(tl.multiple_of(rn, BLOCK_SIZE_N), BLOCK_SIZE_N)
+
+    return rm, rn
+
+
+@triton.jit
+def offset_for_tile(
+    local_tile_id,
+    BLOCK_SIZE_M,
+    BLOCK_SIZE_N,
+    GROUP_SIZE_M,
+    M_local,
+    N_local
+):
+    rm, rn =  tile_id_to_index_range(
+            local_tile_id, M_local, N_local,
+            BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M
+        )
+    c_mask = (rm[:, None] < M_local) & (rn[None, :] < N_local)
+    return rm, rn, c_mask
+
+
+@triton.jit
+def all_scatter(
+    local_C_partial_ptr,
+    local_C_ptr,
+    tile_completed_ptr,
+    heap_bases,
+    M_local,
+    N_local,
+    stride_cm_local,
+    stride_cn_local,
+    stride_cm_global,
+    stride_cn_global,
+    BLOCK_SIZE_M_local: tl.constexpr,
+    BLOCK_SIZE_N_local: tl.constexpr,
+    GROUP_SIZE_M_global: tl.constexpr,
+    total_tiles: tl.constexpr,
+    cur_rank: tl.constexpr,
+    world_size: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tl.program_id(axis=0)
+    if pid != 0:
+        return
+
+    for tile in range(total_tiles):
+        result = 0
+        # Spin till tile is produced
+        while result == 0:
+            compare = 1
+            value = 0
+            result = pyshmem.atomic_cas(
+                tile_completed_ptr + tile,
+                compare,
+                value,
+                cur_rank,
+                cur_rank,
+                heap_bases,
+                sem="acquire",
+                scope="sys",
+            )
+        # Consume the tile
+        rm, rn, load_mask = offset_for_tile(
+            tile, BLOCK_SIZE_M_local, BLOCK_SIZE_N_local, GROUP_SIZE_M_global,
+            M_local, N_local
+        )
+        offset_local = rm[:, None] * stride_cm_local + rn[None, :] * stride_cn_local
+        data = tl.load(local_C_partial_ptr + offset_local, mask=load_mask)
+   
+        rm_global = rm
+        rn_global = rn + cur_rank * N_local
+        store_mask = load_mask
+        offset_global = rm_global[:, None] * stride_cm_global + rn_global[None, :] * stride_cn_global
+
+        # Store
+        for remote_rank in range(world_size):
+            if True:
+                 pyshmem.put(
+                    local_C_ptr + offset_global,
+                    data,
+                    cur_rank,
+                    remote_rank,
+                    heap_bases,
+                    mask=store_mask,
+                )
 
 
 class matmul(torch.autograd.Function):
@@ -40,6 +152,8 @@ class matmul(torch.autograd.Function):
         bias: torch.Tensor,
         P: torch.Tensor,
         locks: torch.Tensor,
+        tile_completed: torch.Tensor,
+        rank: int,
         total_programs_streamk: int,
         BLK_M: int,
         BLK_N: int,
@@ -107,6 +221,8 @@ class matmul(torch.autograd.Function):
             bias,
             P,
             locks,
+            tile_completed,
+            rank,
             M,
             N,
             K,
@@ -132,8 +248,8 @@ class matmul(torch.autograd.Function):
             matrix_instr_nonkdim=mfmaInstrSize,
             kpack=kpack,
         )
-        if matmul._debug:
-            print(f"{kk.n_regs} registers used, {kk.n_spills} spills")
+        # if matmul._debug:
+            # print(f"{kk.n_regs} registers used, {kk.n_spills} spills")
 
         #     print(kk.asm['ttgir'])
         #     print(kk.asm['amdgcn'])
@@ -149,6 +265,8 @@ class matmul(torch.autograd.Function):
         bias: torch.Tensor,
         P: torch.Tensor,
         locks: torch.Tensor,
+        tile_completed: torch.Tensor,
+        rank: int,
         grid: int,
         BLK_M=128,
         BLK_N=128,
@@ -168,6 +286,8 @@ class matmul(torch.autograd.Function):
             bias=bias,
             P=P,
             locks=locks,
+            tile_completed=tile_completed,
+            rank=rank,
             total_programs_streamk=grid,
             BLK_M=BLK_M,
             BLK_N=BLK_N,
@@ -205,36 +325,40 @@ m, n, k = 8192, 8192, 8192  # some problem size to test
 ## sizes that have to do masked load/store
 # m, n, k = 8133, 8132, 8172  # some problem size to test
 # m, n, k = 8128, 6878, 7378  # some problem size to test
-# m, n, k = 6912, 768, 256  # some problem size to test
+m, n, k = 6912, 768, 256  # some problem size to test
 # m, n, k = 5632, 6656, 7936
 
 ## test when k is not multiple of 16
 # m, n, k = 4864, 4096, 4300
 
-dist.init_process_group(backend="nccl", init_method="env://")
-rank = dist.get_rank()
-world_size = dist.get_world_size()
-torch.cuda.set_device(rank)
-print(f"Starting distributed GEMM on Rank {rank} of {world_size} on device cuda:{rank}")
+# m, n, k = 128,128,128
+# m, n, k = 2,2,2
+
+heap_size = 1 << 30
+shmem = pyshmem.pyrocSHMEM(heap_size)
+shmem.log(f"total SMs: {total_sm}")
+shmem.log(f"Device: {shmem.get_device()}")
+rank = shmem.get_rank()
+world_size = shmem.get_num_ranks()
 
 
-A = torch.randn(m, k, device="cuda", dtype=torch.float16)
-B = torch.randn(n, k, device="cuda", dtype=torch.float16).T
+A = shmem.randn(m, k, device="cuda", dtype=torch.float16)
+B = shmem.randn(n, k, device="cuda", dtype=torch.float16).T
 # allocates output
-C = torch.zeros((m, n), device="cuda", dtype=A.dtype)
+C = shmem.zeros((m, n), device="cuda", dtype=A.dtype)
 
+# Split
 M = m
 N = n
 K = k
 n = n // world_size
-
 assert N % world_size == 0, "N must be divisible by world size."
 
-# Partition the weights matrix B across ranks (column-wise)
-local_B = B[:, rank * n:(rank + 1) * n].clone()
-local_C_partial = torch.zeros((m, n), device="cuda", dtype=A.dtype)
 
-# bias = torch.zeros((m,), device="cuda", dtype=A.dtype)
+local_B = B[:, rank * n : (rank + 1) * n].clone()
+local_C_partial = shmem.zeros((m, n), device="cuda", dtype=A.dtype)
+
+# bias = shmem.zeros((m,), device="cuda", dtype=A.dtype)
 bias = None
 BLK_M = 256
 BLK_N = 256
@@ -250,133 +374,96 @@ waves_per_eu = 0
 mfmaInstrSize = 16
 kpack = 2
 
-communication_sms = 1
+communication_sms =2
 streamk_sms = total_sm - communication_sms
 
-print(f"{streamk_sms=}")
+
+shmem.log(f"{streamk_sms=}")
 matmul.set_debug(True)
-locks = torch.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
-P = torch.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
-local_C_partial = matmul.apply(
-    A,
-    local_B,
-    local_C_partial,
-    bias,
-    P,
-    locks,
-    streamk_sms,
-    BLK_M,
-    BLK_N,
-    BLK_K,
-    gsize_m,
-    two_tiles,
-    num_stages,
-    num_warps,
-    waves_per_eu,
-    mfmaInstrSize,
-    kpack,
-)
+locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
+tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
+P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
-torch.cuda.synchronize()
+shmem.log(f"{total_tiles=}")
+shmem.log(f"{tile_completed=}")
 
-# Reduction kernel
-local_C = torch.zeros(M, N, dtype=C.dtype).cuda()
-local_C[:, rank * n:(rank + 1) * n] = local_C_partial
-dist.all_reduce(local_C, op=dist.ReduceOp.SUM)
+shmem.log("Launching GEMM")
 
-torch.cuda.synchronize()
-dist.destroy_process_group()
+local_C = shmem.zeros(M, N, dtype=C.dtype).cuda()
 
-print(f"{total_tiles=}")
+gemm_stream = torch.cuda.Stream()
+comm_stream = torch.cuda.Stream()
+num_experiments=1
 
-# exit(0)
+for exp in range(num_experiments):
+    with torch.cuda.stream(gemm_stream):
+        local_C_partial = matmul.apply(
+            A,
+            local_B,
+            local_C_partial,
+            bias,
+            P,
+            locks,
+            tile_completed,
+            rank,
+            streamk_sms,
+            BLK_M,
+            BLK_N,
+            BLK_K,
+            gsize_m,
+            two_tiles,
+            num_stages,
+            num_warps,
+            waves_per_eu,
+            mfmaInstrSize,
+            kpack,
+        )
+
+    # All scatter kernel
+    communication_block_size = 128
+    communication_num_threads = communication_block_size * communication_sms
+    grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
+
+    with torch.cuda.stream(comm_stream):
+        all_scatter[grid](
+            local_C_partial,
+            local_C,
+            tile_completed,
+            shmem.get_heap_bases(),
+            m,
+            n,
+            local_C_partial.stride(0),
+            local_C_partial.stride(1),
+            C.stride(0),
+            C.stride(1),
+            BLK_M,
+            BLK_N,
+            gsize_m,
+            total_tiles,
+            rank,
+            world_size,
+            BLOCK_SIZE=communication_block_size,
+        )
+    torch.cuda.synchronize()
+    shmem.barrier()
+    shmem.log("Reduction completed..")
+
 matmul.set_debug(False)
 expected = A @ B
+diff_mask = ~torch.isclose(local_C, expected, atol=1)
+breaking_indices = torch.nonzero(diff_mask, as_tuple=False)
 
-assert torch.allclose(local_C, expected, atol=1), f"max: {(local_C - expected).abs().max().item()}\n{C}\n{expected}"
-print("pass validation test")
+if not torch.allclose(local_C, expected, atol=1):
+    max_diff = (local_C - expected).abs().max().item()
+    shmem.log(f"Max absolute difference: {max_diff}")
+    for idx in breaking_indices:
+        idx = tuple(idx.tolist())
+        local_val = local_C[idx]
+        expected_val = expected[idx]
+        shmem.log(f"Mismatch at index {idx}: local_C={local_val}, expected={expected_val}")
 
-# for debugging, uncomment the following line
-exit(0)
+assert torch.allclose(local_C, expected, atol=1), f"max: {(local_C - expected).abs().max().item()}\n{local_C}\n{expected}"
 
-triton_ms = triton.testing.do_bench(lambda: torch.matmul(A, B))
-print(f"PyTorch: {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
-
-locks = torch.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
-P = torch.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
-triton_ms = triton.testing.do_bench(
-    lambda: matmul.apply(
-        A,
-        B,
-        C,
-        bias,
-        P,
-        locks,
-        streamk_sms,
-        BLK_M,
-        BLK_N,
-        BLK_K,
-        gsize_m,
-        two_tiles,
-        num_stages,
-        num_warps,
-        waves_per_eu,
-        mfmaInstrSize,
-        kpack,
-    )
-)
-print(
-    f"hybrid stream-k (grid={streamk_sms}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
-)
-
-# locks = torch.zeros((streamk_sms * 2,), device="cuda", dtype=torch.int32)
-# P = torch.zeros((streamk_sms * 2, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
-# triton_ms = triton.testing.do_bench(
-#     lambda: matmul.apply(
-#         A,
-#         B,
-#         C,
-#         bias,
-#         P,
-#         locks,
-#         streamk_sms * 2,
-#         BLK_M,
-#         BLK_N,
-#         BLK_K,
-#         gsize_m,
-#         two_tiles,
-#         num_stages,
-#         num_warps,
-#         waves_per_eu,
-#         mfmaInstrSize,
-#         kpack,
-#     )
-# )
-# print(
-#     f"hybrid stream-k (grid={streamk_sms * 2}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
-# )
-
-# triton_ms = triton.testing.do_bench(
-#     lambda: matmul.apply(
-#         A,
-#         B,
-#         C,
-#         bias,
-#         P,
-#         locks,
-#         total_tiles,
-#         BLK_M,
-#         BLK_N,
-#         BLK_K,
-#         gsize_m,
-#         two_tiles,
-#         num_stages,
-#         num_warps,
-#         waves_per_eu,
-#         mfmaInstrSize,
-#         kpack,
-#     )
-# )
-# print(
-#     f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops"
-# )
+# Validation barrier
+shmem.barrier()
+shmem.log("pass validation test")
