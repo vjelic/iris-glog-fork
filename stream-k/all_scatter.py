@@ -12,7 +12,7 @@ import triton.language as tl
 # from streamk_kernel import streamk_gemm
 # from streamk_kernel_atomic import streamk_gemm
 from gemm import persistent_gemm
-from communicator import all_scatter_kernel
+from communication import all_scatter_kernel
 
 torch.manual_seed(123)
 random.seed(123)
@@ -23,53 +23,6 @@ gpu = "mi250"
 total_sm = 304 if gpu == "mi300" else 104
 num_xcds = 8 if gpu == "mi300" else 1
 gemm_kernel = persistent_gemm
-
-
-@triton.jit
-def tile_id_to_index_range(
-    tile_id,
-    M,
-    N,
-    BLOCK_SIZE_M: tl.constexpr,
-    BLOCK_SIZE_N: tl.constexpr,
-    GROUP_SIZE_M: tl.constexpr,
-):
-    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
-    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
-    num_pid_in_group = GROUP_SIZE_M * num_pid_n
-
-    group_id = tile_id // num_pid_in_group
-    first_pid_m = group_id * GROUP_SIZE_M
-    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-
-    pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
-    pid_n = (tile_id % num_pid_in_group) // group_size_m
-
-    rm = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
-    rn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
-
-    rm = tl.max_contiguous(tl.multiple_of(rm, BLOCK_SIZE_M), BLOCK_SIZE_M)
-    rn = tl.max_contiguous(tl.multiple_of(rn, BLOCK_SIZE_N), BLOCK_SIZE_N)
-
-    return rm, rn
-
-
-@triton.jit
-def offset_for_tile(
-    local_tile_id,
-    BLOCK_SIZE_M,
-    BLOCK_SIZE_N,
-    GROUP_SIZE_M,
-    M_local,
-    N_local
-):
-    rm, rn =  tile_id_to_index_range(
-            local_tile_id, M_local, N_local,
-            BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M
-        )
-    c_mask = (rm[:, None] < M_local) & (rn[None, :] < N_local)
-    return rm, rn, c_mask
-
 
 
 class matmul(torch.autograd.Function):

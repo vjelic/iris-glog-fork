@@ -1,8 +1,8 @@
 #!/bin/bash
 
-NUM_GPUS=2
+NUM_GPUS=8
 OMP_NUM_THREADS=1
-COLLECTIVE="all_gather"
+COLLECTIVE="all_scatter"
 
 show_help() {
     echo "Usage: $0 [OPTIONS]"
@@ -30,4 +30,4 @@ done
 export OMP_NUM_THREADS=$OMP_NUM_THREADS
 
 echo "Running '$COLLECTIVE' with $NUM_GPUS GPUs..."
-python -m torch.distributed.run --nproc_per_node=${NUM_GPUS} "${COLLECTIVE}.py"
+mpirun -np $NUM_GPUS python "${COLLECTIVE}.py"
