@@ -1,4 +1,4 @@
-num_gpus=8
+num_gpus=2
 export OMP_NUM_THREADS=1
 collective="all_gather"
 # collective="all_reduce"

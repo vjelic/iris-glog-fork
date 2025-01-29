@@ -14,8 +14,8 @@ def main():
 
     print(f"Starting distributed GEMM on Rank {rank} of {world_size} on device cuda:{rank}")
 
-    A_full = torch.randn(M, K).cuda(rank)
-    B_full = torch.randn(K, N).cuda(rank)
+    A_full = torch.randn(M, K, device=f"cuda:{rank}")
+    B_full = torch.randn(K, N, device=f"cuda:{rank}")
 
     # Split B column-wise
     cols_per_gpu = N // world_size
@@ -23,20 +23,18 @@ def main():
     end_col = start_col + cols_per_gpu
     B_local = B_full[:, start_col:end_col]
 
-    # Perform the local computation
+    # Perform local computation
     C_partial = A_full @ B_local
 
-    # Prepare a tensor to gather all partial results
-    C_gathered = torch.zeros(M, N).cuda(rank)
+    # Allocate tensor for gathered results
+    C_global = torch.empty(M, N, device=f"cuda:{rank}")
 
-    # All-gather the results
-    C_parts = list(torch.chunk(C_gathered, world_size, dim=1))
-    dist.all_gather(C_parts, C_partial)
+    # Manually specify slices to gather into
+    gathered_parts = [C_global[:, i * cols_per_gpu: (i + 1) * cols_per_gpu] for i in range(world_size)]
 
-    # Combine the gathered parts
-    C_global = torch.cat(C_parts, dim=1)
+    dist.all_gather(gathered_parts, C_partial)
 
-    # Validation step
+    # Validation
     C_full = A_full @ B_full
     valid = torch.allclose(C_global, C_full, atol=1e-5)
     if valid:

@@ -1,13 +1,16 @@
 # Stream-K + pyrocSHMEM
 
+
 This repository contains code for experimenting with Stream-K GEMMs + communication kernels.
+
+![dist_gemm](imgs/dist_gemm.excalidraw.svg)
 
 
 ## Algorithms
 At the moment we assume that:
 
 $C = A \times B$
-where, 
+where,
 * B (weights): sharded column/row-wise across GPUs,
 * A (activations): replicated across GPUs,
 * C (activations output): replicated across GPUs.
