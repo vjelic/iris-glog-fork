@@ -12,6 +12,7 @@ import triton.language as tl
 # from streamk_kernel import streamk_gemm
 # from streamk_kernel_atomic import streamk_gemm
 from gemm import persistent_gemm
+from communicator import all_scatter_kernel
 
 torch.manual_seed(123)
 random.seed(123)
@@ -69,71 +70,6 @@ def offset_for_tile(
     c_mask = (rm[:, None] < M_local) & (rn[None, :] < N_local)
     return rm, rn, c_mask
 
-
-@triton.jit
-def all_scatter(
-    local_C_partial_ptr,
-    local_C_ptr,
-    tile_completed_ptr,
-    heap_bases,
-    M_local,
-    N_local,
-    stride_cm_local,
-    stride_cn_local,
-    stride_cm_global,
-    stride_cn_global,
-    BLOCK_SIZE_M_local: tl.constexpr,
-    BLOCK_SIZE_N_local: tl.constexpr,
-    GROUP_SIZE_M_global: tl.constexpr,
-    total_tiles: tl.constexpr,
-    cur_rank: tl.constexpr,
-    world_size: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-):
-    pid = tl.program_id(axis=0)
-    if pid != 0:
-        return
-
-    for tile in range(total_tiles):
-        result = 0
-        # Spin till tile is produced
-        while result == 0:
-            compare = 1
-            value = 0
-            result = pyshmem.atomic_cas(
-                tile_completed_ptr + tile,
-                compare,
-                value,
-                cur_rank,
-                cur_rank,
-                heap_bases,
-                sem="acquire",
-                scope="sys",
-            )
-        # Consume the tile
-        rm, rn, load_mask = offset_for_tile(
-            tile, BLOCK_SIZE_M_local, BLOCK_SIZE_N_local, GROUP_SIZE_M_global,
-            M_local, N_local
-        )
-        offset_local = rm[:, None] * stride_cm_local + rn[None, :] * stride_cn_local
-        data = tl.load(local_C_partial_ptr + offset_local, mask=load_mask)
-   
-        rm_global = rm
-        rn_global = rn + cur_rank * N_local
-        store_mask = load_mask
-        offset_global = rm_global[:, None] * stride_cm_global + rn_global[None, :] * stride_cn_global
-
-        # Store
-        for remote_rank in range(world_size):
-            if True:
-                 pyshmem.put(
-                    local_C_ptr + offset_global,
-                    data,
-                    cur_rank,
-                    remote_rank,
-                    heap_bases,
-                    mask=store_mask,
-                )
 
 
 class matmul(torch.autograd.Function):
@@ -425,7 +361,7 @@ for exp in range(num_experiments):
     grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
 
     with torch.cuda.stream(comm_stream):
-        all_scatter[grid](
+        all_scatter_kernel[grid](
             local_C_partial,
             local_C,
             tile_completed,
