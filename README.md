@@ -1,4 +1,4 @@
-# Stream-K pyrocSHMEM
+# Stream-K + pyrocSHMEM
 
 This repository contains code for experimenting with Stream-K GEMMs + communication kernels.
 
@@ -9,7 +9,7 @@ At the moment we assume that:
 $C = A \times B$
 where, 
 * B (weights): sharded column/row-wise across GPUs,
-* A (activations): replicated across GPUs.
+* A (activations): replicated across GPUs,
 * C (activations output): replicated across GPUs.
 
 Currently, there are two implementations:
@@ -17,7 +17,7 @@ Currently, there are two implementations:
 1. Stream-K + All reduce.
 Where B is partitioned *row-wise* and hence A is also partitioned column-wise so that we have two tall skinny matrices producing a partial C with shape of M*N and the all reduce kernel reduces the result across all PEs.
 
-2, Stream-K + All scatter
+2. Stream-K + All scatter
 Where B is partitioned  *column-wise* and hence each rank produces non-overlapping columns in the C matrix such that we only need all gather/scatter to broadcast the final result.
 
 
