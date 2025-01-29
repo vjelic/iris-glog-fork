@@ -6,7 +6,7 @@ This repository contains code for experimenting with Stream-K GEMMs + communicat
 ## Algorithms
 At the moment we assume that:
 
-$C = A\timesB$
+$C = A \timesB $
 where, 
 * B (weights): sharded column/row-wise across GPUs,
 * A (activations): replicated across GPUs.
