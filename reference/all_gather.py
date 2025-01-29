@@ -2,10 +2,9 @@ import torch
 import torch.distributed as dist
 
 def main():
-
     torch.manual_seed(42)
 
-    M, K, N = 8, 8, 8
+    M, K, N = 1024, 64, 512
 
     dist.init_process_group("nccl")
 
@@ -17,25 +16,34 @@ def main():
 
     A_full = torch.randn(M, K).cuda(rank)
     B_full = torch.randn(K, N).cuda(rank)
-    rows_per_gpu = K // world_size
-    start_row = rank * rows_per_gpu
-    end_row = start_row + rows_per_gpu
-    B_local = B_full[start_row:end_row, :]
-    A_local = A_full[:, start_row:end_row]
-    C_partial = A_local @ B_local
-    C_global = torch.zeros_like(C_partial)
-    dist.all_reduce(C_partial, op=dist.ReduceOp.SUM)
-    C_global.copy_(C_partial)
-    # print(f"Rank {rank}: C_global =\n{C_global.cpu().numpy()}")
+
+    # Split B column-wise
+    cols_per_gpu = N // world_size
+    start_col = rank * cols_per_gpu
+    end_col = start_col + cols_per_gpu
+    B_local = B_full[:, start_col:end_col]
+
+    # Perform the local computation
+    C_partial = A_full @ B_local
+
+    # Prepare a tensor to gather all partial results
+    C_gathered = torch.zeros(M, N).cuda(rank)
+
+    # All-gather the results
+    C_parts = list(torch.chunk(C_gathered, world_size, dim=1))
+    dist.all_gather(C_parts, C_partial)
+
+    # Combine the gathered parts
+    C_global = torch.cat(C_parts, dim=1)
 
     # Validation step
-        # Perform full GEMM computation non-distributedly
     C_full = A_full @ B_full
     valid = torch.allclose(C_global, C_full, atol=1e-5)
     if valid:
         print(f"Rank {rank}: Validation passed! Distributed GEMM matches full GEMM.")
     else:
         print(f"Rank {rank}: Validation failed! Results do not match.")
+
     dist.barrier()
     dist.destroy_process_group()
 

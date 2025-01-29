@@ -4,8 +4,6 @@ import os
 import torch
 
 
-print("Initializing....")
-
 # Pipe allocations via finegrained allocator
 current_dir = os.path.dirname(__file__)
 finegrained_alloc_path = os.path.join(

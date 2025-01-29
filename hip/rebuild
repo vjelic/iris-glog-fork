@@ -1,5 +1,0 @@
-
-rm -rf build
-hip_arch="gfx90a" #specify your GPU architecture
-CC=hipcc CXX=hipcc cmake -B build -DCMAKE_HIP_ARCHITECTURES=${hip_arch}
-cmake --build build --  VERBOSE=1
