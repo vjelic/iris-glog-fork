@@ -22,7 +22,7 @@ Where B is partitioned  *column-wise* and hence each rank produces non-overlappi
 
 
 ## Getting started
-An Apptainer definition file that takes care of all decencies. To build the image:
+An Apptainer definition file that takes care of all depednaices. You can also copy the contents of the `.def` file and create a similar Docker container. We use Apptainer on HPC Fund so we are currently maintaining that. To build the image:
 ```shell
 ./apptainer/build.sh
 ```
