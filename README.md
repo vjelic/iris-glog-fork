@@ -3,7 +3,7 @@
 
 This repository contains code for experimenting with Stream-K GEMMs + communication kernels.
 
-![dist_gemm](imgs/dist_gemm.excalidraw.svg)
+![dist_gemm](images/dist_gemm.excalidraw.svg)
 
 
 ## Algorithms
@@ -25,7 +25,26 @@ Where $B$ is partitioned  *column-wise* and hence each rank produces non-overlap
 
 
 ## Getting started
-We provide an Apptainer definition file contains all depednaices to reproduce the result. You can also copy the contents of the `.def` file and create a similar Docker container. We use Apptainer on HPC Fund so we are currently maintaining that. To build the image:
+
+### Docker
+We provide a docker file that sets up all dependancies. To build the image:
+
+```shell
+cd ./docker
+./build.sh
+```
+
+To run the image, there's various ways, we provide a simple alias around the docker command to run a docker container with all the GPUs in the system:
+```shell
+alias drun='docker run -it --network=host --device=/dev/kfd --device=/dev/dri --group-add video --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -v $HOME:$HOME -w $HOME --shm-size=16G --ulimit memlock=-1 --ulimit stack=67108864'
+```
+
+```shell
+drun sk-pyrocshmem # or the name of the image you specified to build.sh
+```
+
+### Apptainer
+We provide an Apptainer definition file contains all dependancies to reproduce the result. You can also copy the contents of the `.def` file and create a similar Docker container. We use Apptainer on HPC Fund so we are currently maintaining that. To build the image:
 ```shell
 ./apptainer/build.sh
 ```
@@ -41,7 +60,9 @@ Once inside the Apptainer image, source the `activate.sh` script.
 source activate.sh
 ```
 
-Now you are inside a Conda environment. Before running code, you need to build `finegrained_alloc`, a C library interface for fine-grained allocation. The plugin is required to redirect PyTorch allocation to fine-grained memory.
+### Run Example
+
+Once you are inside a Conda environment (in docker or apptainer). Before running code, you need to build `finegrained_alloc`, a C library interface for fine-grained allocation. The plugin is required to redirect PyTorch allocation to fine-grained memory.
 
 ```shell
 cd pyrocSHMEM/finegrained_alloc/
@@ -58,7 +79,7 @@ cd stream-k
 ```
 
 ```terminal
-(py_3.10) Apptainer> ./run.sh --help
+./run.sh --help
 Usage: ./run.sh [OPTIONS]
 
 Options:

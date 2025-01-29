@@ -30,4 +30,4 @@ done
 export OMP_NUM_THREADS=$OMP_NUM_THREADS
 
 echo "Running '$COLLECTIVE' with $NUM_GPUS GPUs..."
-mpirun -np $NUM_GPUS python "${COLLECTIVE}.py"
+mpirun --allow-run-as-root -np $NUM_GPUS python "${COLLECTIVE}.py"
