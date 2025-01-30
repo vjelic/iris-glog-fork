@@ -6,13 +6,7 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
-import triton.language as tl
 
-
-# from streamk_kernel import streamk_gemm
-# from streamk_kernel_atomic import streamk_gemm
-from gemm import persistent_gemm
-from communication import all_scatter_kernel
 
 torch.manual_seed(123)
 random.seed(123)
@@ -21,219 +15,31 @@ gpu = "mi300"
 gpu = "mi250"
 
 total_sm = 304 if gpu == "mi300" else 104
-num_xcds = 8 if gpu == "mi300" else 1
-gemm_kernel = persistent_gemm
 
-
-class matmul(torch.autograd.Function):
-
-    _debug = True
-
-    @staticmethod
-    def set_debug(debug: bool):
-        matmul._debug = debug
-
-    @staticmethod
-    def _call(
-        a: torch.Tensor,
-        b: torch.Tensor,
-        c: torch.Tensor,
-        bias: torch.Tensor,
-        P: torch.Tensor,
-        locks: torch.Tensor,
-        tile_completed: torch.Tensor,
-        rank: int,
-        total_programs_streamk: int,
-        BLK_M: int,
-        BLK_N: int,
-        BLK_K: int,
-        gsize_m: int,
-        two_tiles: bool,
-        num_stages: int,
-        num_warps: int,
-        waves_per_eu: int,
-        mfmaInstrSize: int,
-        kpack: int,
-    ):
-
-        #        assert a.is_contiguous() and b.is_contiguous(), "non-contiguous inputs are not supported"
-        # checks constraints
-        assert a.shape[1] == b.shape[0], "incompatible dimensions"
-        M, K = a.shape
-        _, N = b.shape
-
-        total_blocks_M = triton.cdiv(M, BLK_M)
-        total_blocks_N = triton.cdiv(N, BLK_N)
-        iters_per_tile = triton.cdiv(K, BLK_K)
-        total_tiles = total_blocks_M * total_blocks_N
-        even_k = K % BLK_K == 0
-
-        if total_programs_streamk > 0:  # Stream-K
-            # last wave may occupy less than total_programs_streamk SMs
-            total_tiles_streamk = total_tiles % total_programs_streamk
-            # for two-tile Stream-K + data-parallel from original paper
-            #            if two_tiles and total_tiles - total_tiles_streamk > total_programs_streamk:
-            #                total_tiles_streamk += total_programs_streamk
-            # remaining tiles are computed using classical blocking
-            total_blocking_tiles = total_tiles - total_tiles_streamk
-            total_iters_streamk = total_tiles_streamk * iters_per_tile
-            # iterations related to full waves
-            total_full_tiles_streamk = total_iters_streamk // total_programs_streamk
-            # iterations related to last (partial) wave
-            total_partial_tiles_streamk = total_iters_streamk % total_programs_streamk
-
-        else:  # all tiles are computed using classical blocking
-            total_blocking_tiles = total_tiles
-            total_tiles_streamk = 0
-            total_full_tiles_streamk = 0
-            total_partial_tiles_streamk = 0
-            total_iters_streamk = 0
-
-        if matmul._debug:
-            print(f"M,N,K={M},{N},{K} ; BLK_M,N,K={BLK_M},{BLK_N},{BLK_K}")
-            print(f"{total_blocks_M=} x {total_blocks_N=} = {total_tiles=}")
-            print(f"{total_tiles_streamk=} + {total_blocking_tiles=} = {total_tiles=}")
-            print(f"{total_programs_streamk=}")
-            print(f"{total_blocking_tiles=}")
-            print(f"{total_full_tiles_streamk=}")
-            print(f"{iters_per_tile=}")
-            print(f"{total_iters_streamk=}")
-            print("total_remainder_iters_streamk=", total_partial_tiles_streamk)
-        use_bias = False
-        # compute grid (work to do per SM on the first wave)
-        grids = total_programs_streamk
-        stride_bias = bias.stride(0) if use_bias else 0
-        kk = gemm_kernel[(grids,)](
-            a,
-            b,
-            c,
-            bias,
-            P,
-            locks,
-            tile_completed,
-            rank,
-            M,
-            N,
-            K,
-            a.stride(0),
-            a.stride(1),
-            b.stride(0),
-            b.stride(1),
-            c.stride(0),
-            c.stride(1),
-            stride_bias,
-            BLOCK_SIZE_M=BLK_M,
-            BLOCK_SIZE_N=BLK_N,
-            BLOCK_SIZE_K=BLK_K,
-            GROUP_SIZE_M=gsize_m,
-            NUM_SMS=total_programs_streamk,
-            STREAMK_TILES=total_tiles_streamk,
-            NUM_XCDS=num_xcds,
-            BIAS=use_bias,
-            EVEN_K=even_k,
-            num_stages=num_stages,
-            num_warps=num_warps,
-            waves_per_eu=waves_per_eu,
-            matrix_instr_nonkdim=mfmaInstrSize,
-            kpack=kpack,
-        )
-        # if matmul._debug:
-            # print(f"{kk.n_regs} registers used, {kk.n_spills} spills")
-
-        #     print(kk.asm['ttgir'])
-        #     print(kk.asm['amdgcn'])
-
-        return c
-
-    @staticmethod
-    def forward(
-        ctx,
-        a: torch.Tensor,
-        b: torch.Tensor,
-        c: torch.Tensor,
-        bias: torch.Tensor,
-        P: torch.Tensor,
-        locks: torch.Tensor,
-        tile_completed: torch.Tensor,
-        rank: int,
-        grid: int,
-        BLK_M=128,
-        BLK_N=128,
-        BLK_K=32,
-        gsize_m=1,
-        two_tiles=True,
-        num_stages=3,
-        num_warps=4,
-        waves_per_eu=2,
-        mfmaInstrSize=16,
-        kpack=1,
-    ):
-        matmul._call(
-            a=a,
-            b=b,
-            c=c,
-            bias=bias,
-            P=P,
-            locks=locks,
-            tile_completed=tile_completed,
-            rank=rank,
-            total_programs_streamk=grid,
-            BLK_M=BLK_M,
-            BLK_N=BLK_N,
-            BLK_K=BLK_K,
-            gsize_m=gsize_m,
-            two_tiles=two_tiles,
-            num_warps=num_warps,
-            num_stages=num_stages,
-            waves_per_eu=waves_per_eu,
-            mfmaInstrSize=mfmaInstrSize,
-            kpack=kpack,
-        )
-        return c
-
+from communication import all_scatter_kernel
+from matmul_wrapper import matmul
 
 # ---------------------------------------------------------------------------
 # Example and Benchmark
 # ---------------------------------------------------------------------------
 
+debug = False
 perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
-
-## sweet shapes has multiple of 304 tiles
-# m, n, k = 4864, 4096, 8256  # some problem size to test
-# m, n, k =4864, 8192, 4160  # some problem size to test
-# m, n, k = 8192, 4864, 6878  # some problem size to test
-
-## test for tiles that is not multipe of 304 tiles
-# m, n, k = 4096, 4096, 8192  # some problem size to test
-m, n, k = 8192, 8192, 8192  # some problem size to test
-# m, n, k = 512, 512, 512  # some problem size to test
-
-## memory bound sizes
-# m, n, k = 1, 1024, 256
-
-## sizes that have to do masked load/store
-# m, n, k = 8133, 8132, 8172  # some problem size to test
-# m, n, k = 8128, 6878, 7378  # some problem size to test
-m, n, k = 6912, 768, 256  # some problem size to test
-# m, n, k = 5632, 6656, 7936
-
-## test when k is not multiple of 16
-# m, n, k = 4864, 4096, 4300
-
-# m, n, k = 128,128,128
-# m, n, k = 2,2,2
+m, n, k = 4864, 4096, 8256
 
 heap_size = 1 << 30
 shmem = pyshmem.pyrocSHMEM(heap_size)
-shmem.log(f"total SMs: {total_sm}")
-shmem.log(f"Device: {shmem.get_device()}")
 rank = shmem.get_rank()
 world_size = shmem.get_num_ranks()
 
+shmem.log(f"total SMs: {total_sm}")
+shmem.log(f"Device: {shmem.get_device()}")
 
-A = shmem.randn(m, k, device="cuda", dtype=torch.float16)
-B = shmem.randn(n, k, device="cuda", dtype=torch.float16).T
-# allocates output
+# data_type = torch.float16
+data_type = torch.float32
+
+A = shmem.randn(m, k, device="cuda", dtype=data_type)
+B = shmem.randn(n, k, device="cuda", dtype=data_type).T
 C = shmem.zeros((m, n), device="cuda", dtype=A.dtype)
 
 # Split
@@ -243,11 +49,9 @@ K = k
 n = n // world_size
 assert N % world_size == 0, "N must be divisible by world size."
 
-
 local_B = B[:, rank * n : (rank + 1) * n].clone()
 local_C_partial = shmem.zeros((m, n), device="cuda", dtype=A.dtype)
 
-# bias = shmem.zeros((m,), device="cuda", dtype=A.dtype)
 bias = None
 BLK_M = 256
 BLK_N = 256
@@ -257,24 +61,26 @@ total_blocks_N = triton.cdiv(n, BLK_N)
 total_tiles = total_blocks_M * total_blocks_N
 gsize_m = 8
 two_tiles = "True"
-num_stages = 2
+
+num_stages = 1
 num_warps = 8
 waves_per_eu = 0
 mfmaInstrSize = 16
 kpack = 2
 
-communication_sms =2
+communication_sms = 2
 streamk_sms = total_sm - communication_sms
 
 
 shmem.log(f"{streamk_sms=}")
-matmul.set_debug(True)
+shmem.log(f"{communication_sms=}")
+
+matmul.set_debug(debug)
 locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
 tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
 shmem.log(f"{total_tiles=}")
-shmem.log(f"{tile_completed=}")
 
 shmem.log("Launching GEMM")
 
@@ -285,6 +91,8 @@ comm_stream = torch.cuda.Stream()
 num_experiments=1
 
 for exp in range(num_experiments):
+    torch.cuda.nvtx.range_push(f"GEMM + Communication {exp}")
+    torch.cuda.nvtx.range_push(f"GEMM {exp}")
     with torch.cuda.stream(gemm_stream):
         local_C_partial = matmul.apply(
             A,
@@ -313,8 +121,10 @@ for exp in range(num_experiments):
     communication_num_threads = communication_block_size * communication_sms
     grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
 
+    torch.cuda.nvtx.range_pop()
+    torch.cuda.nvtx.range_push(f"Communication {exp}")
     with torch.cuda.stream(comm_stream):
-        all_scatter_kernel[grid](
+        ss = all_scatter_kernel[grid](
             local_C_partial,
             local_C,
             tile_completed,
@@ -333,10 +143,15 @@ for exp in range(num_experiments):
             world_size,
             BLOCK_SIZE=communication_block_size,
         )
+
+        if debug:
+            shmem.log(f"{ss.n_regs} registers used, {ss.n_spills} spills")
+
     torch.cuda.synchronize()
     shmem.barrier()
-    shmem.log("Reduction completed..")
+    shmem.log("Scatter completed.")
 
+# Validation
 matmul.set_debug(False)
 expected = A @ B
 diff_mask = ~torch.isclose(local_C, expected, atol=1)
@@ -355,4 +170,6 @@ assert torch.allclose(local_C, expected, atol=1), f"max: {(local_C - expected).a
 
 # Validation barrier
 shmem.barrier()
-shmem.log("pass validation test")
+shmem.log("Validation passed.")
+
+exit(0)

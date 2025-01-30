@@ -77,6 +77,7 @@ def all_reduce_kernel(
     cur_rank: tl.constexpr,
     world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
+    BLK_K: tl.constexpr = 16,
 ):
     pid = tl.program_id(axis=0)
 
