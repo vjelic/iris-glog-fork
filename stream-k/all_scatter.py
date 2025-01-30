@@ -14,7 +14,8 @@ random.seed(123)
 gpu = "mi300"
 gpu = "mi250"
 
-total_sm = 304 if gpu == "mi300" else 104
+total_sm = 304
+# if gpu == "mi300" else 104
 
 from communication import all_scatter_kernel
 from matmul_wrapper import matmul
@@ -55,7 +56,7 @@ local_C = shmem.zeros(M, N, dtype=C.dtype).cuda()
 bias = None
 BLK_M = 256
 BLK_N = 256
-BLK_K = 64
+BLK_K = 32
 total_blocks_M = triton.cdiv(m, BLK_M)
 total_blocks_N = triton.cdiv(n, BLK_N)
 total_tiles = total_blocks_M * total_blocks_N
@@ -68,8 +69,8 @@ waves_per_eu = 0
 mfmaInstrSize = 16
 kpack = 2
 
-communication_sms = 2
-streamk_sms = total_sm - communication_sms
+streamk_sms = 256
+communication_sms = total_sm - streamk_sms
 communication_block_size = 128
 communication_num_threads = communication_block_size * communication_sms
 grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
@@ -141,10 +142,10 @@ def run_experiment():
             rank,
             world_size,
             BLOCK_SIZE=communication_block_size,
+            NUM_SMS=communication_sms,
         )
 
-        if debug:
-            shmem.log(f"{ss.n_regs} registers used, {ss.n_spills} spills")
+        shmem.log_debug(f"{ss.n_regs} registers used, {ss.n_spills} spills")
 
     torch.cuda.nvtx.range_pop()
     torch.cuda.synchronize()
@@ -165,7 +166,7 @@ if benchmark:
     perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
 
     triton_ms = triton.testing.do_bench(lambda: run_experiment())
-    shmem.log(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
+    shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
 
 
 exit(0)
