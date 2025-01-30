@@ -19,6 +19,7 @@ import math
 import torch
 import ctypes
 
+STATS = True
 LOGGING = True
 DEBUG = False
 
@@ -83,6 +84,10 @@ class pyrocSHMEM:
 
     def log_debug(self, message):
         if DEBUG:
+            print(f"[pyrocSHMEM] [{self.cur_rank}/{self.num_ranks}] {message}")
+
+    def log_stats(self, message):
+        if STATS:
             print(f"[pyrocSHMEM] [{self.cur_rank}/{self.num_ranks}] {message}")
 
     def allocate(self, num_elements, dtype):

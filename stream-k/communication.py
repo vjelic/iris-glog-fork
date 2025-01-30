@@ -77,16 +77,11 @@ def all_reduce_kernel(
     cur_rank: tl.constexpr,
     world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
-    BLK_K: tl.constexpr = 16,
+    NUM_SMS: tl.constexpr,
 ):
     pid = tl.program_id(axis=0)
 
-    # TODO: Parallel over PIDs.
-    if pid != 0:
-        return
-
-    # TODO: Match producer loop
-    for tile in range(total_tiles):
+    for tile in range(pid, total_tiles, NUM_SMS):
         result = 0
         while result == 0:
             compare = 1
@@ -143,12 +138,11 @@ def all_scatter_kernel(
     cur_rank: tl.constexpr,
     world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
+    NUM_SMS: tl.constexpr,
 ):
     pid = tl.program_id(axis=0)
-    if pid != 0:
-        return
 
-    for tile in range(total_tiles):
+    for tile in range(pid, total_tiles, NUM_SMS):
         result = 0
         # Spin till tile is produced
         while result == 0:
