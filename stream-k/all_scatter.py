@@ -18,22 +18,21 @@ total_sm = 304 if gpu == "mi300" else 104
 
 from communication import all_scatter_kernel
 from matmul_wrapper import matmul
+from validation import validate_gemm
 
 # ---------------------------------------------------------------------------
 # Example and Benchmark
 # ---------------------------------------------------------------------------
 
 debug = False
-perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
+validate = True
+benchmark = True
 m, n, k = 4864, 4096, 8256
 
 heap_size = 1 << 30
 shmem = pyshmem.pyrocSHMEM(heap_size)
 rank = shmem.get_rank()
 world_size = shmem.get_num_ranks()
-
-shmem.log(f"total SMs: {total_sm}")
-shmem.log(f"Device: {shmem.get_device()}")
 
 # data_type = torch.float16
 data_type = torch.float32
@@ -51,6 +50,7 @@ assert N % world_size == 0, "N must be divisible by world size."
 
 local_B = B[:, rank * n : (rank + 1) * n].clone()
 local_C_partial = shmem.zeros((m, n), device="cuda", dtype=A.dtype)
+local_C = shmem.zeros(M, N, dtype=C.dtype).cuda()
 
 bias = None
 BLK_M = 256
@@ -70,29 +70,32 @@ kpack = 2
 
 communication_sms = 2
 streamk_sms = total_sm - communication_sms
+communication_block_size = 128
+communication_num_threads = communication_block_size * communication_sms
+grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
 
 
+
+shmem.log(f"Device: {shmem.get_device()}")
+shmem.log(f"total SMs: {total_sm}")
 shmem.log(f"{streamk_sms=}")
 shmem.log(f"{communication_sms=}")
+shmem.log(f"{total_tiles=}")
+
 
 matmul.set_debug(debug)
 locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
 tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
-shmem.log(f"{total_tiles=}")
-
-shmem.log("Launching GEMM")
-
-local_C = shmem.zeros(M, N, dtype=C.dtype).cuda()
 
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
-num_experiments=1
 
-for exp in range(num_experiments):
-    torch.cuda.nvtx.range_push(f"GEMM + Communication {exp}")
-    torch.cuda.nvtx.range_push(f"GEMM {exp}")
+def run_experiment():
+    global local_C_partial
+    torch.cuda.nvtx.range_push(f"GEMM + Communication")
+    torch.cuda.nvtx.range_push(f"GEMM")
     with torch.cuda.stream(gemm_stream):
         local_C_partial = matmul.apply(
             A,
@@ -117,12 +120,8 @@ for exp in range(num_experiments):
         )
 
     # All scatter kernel
-    communication_block_size = 128
-    communication_num_threads = communication_block_size * communication_sms
-    grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
-
     torch.cuda.nvtx.range_pop()
-    torch.cuda.nvtx.range_push(f"Communication {exp}")
+    torch.cuda.nvtx.range_push(f"Communication")
     with torch.cuda.stream(comm_stream):
         ss = all_scatter_kernel[grid](
             local_C_partial,
@@ -147,29 +146,26 @@ for exp in range(num_experiments):
         if debug:
             shmem.log(f"{ss.n_regs} registers used, {ss.n_spills} spills")
 
+    torch.cuda.nvtx.range_pop()
     torch.cuda.synchronize()
     shmem.barrier()
-    shmem.log("Scatter completed.")
+    torch.cuda.nvtx.range_pop()
 
-# Validation
-matmul.set_debug(False)
-expected = A @ B
-diff_mask = ~torch.isclose(local_C, expected, atol=1)
-breaking_indices = torch.nonzero(diff_mask, as_tuple=False)
 
-if not torch.allclose(local_C, expected, atol=1):
-    max_diff = (local_C - expected).abs().max().item()
-    shmem.log(f"Max absolute difference: {max_diff}")
-    for idx in breaking_indices:
-        idx = tuple(idx.tolist())
-        local_val = local_C[idx]
-        expected_val = expected[idx]
-        shmem.log(f"Mismatch at index {idx}: local_C={local_val}, expected={expected_val}")
 
-assert torch.allclose(local_C, expected, atol=1), f"max: {(local_C - expected).abs().max().item()}\n{local_C}\n{expected}"
+run_experiment()
 
-# Validation barrier
-shmem.barrier()
-shmem.log("Validation passed.")
+if validate:
+    matmul.set_debug(False)
+    validate_gemm(A, B, local_C, shmem)
+    shmem.barrier()
+    shmem.log("Validation passed.")
+
+if benchmark:
+    perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
+
+    triton_ms = triton.testing.do_bench(lambda: run_experiment())
+    shmem.log(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
+
 
 exit(0)
