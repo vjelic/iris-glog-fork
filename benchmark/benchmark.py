@@ -54,7 +54,7 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, 
 
     job_name = f"{hash}/{algorithm}_{m}-{k}-{n}_{num_gpus}"
 
-    slurm_out_dir = f"slurm_log/{job_name}"
+    slurm_out_dir = f"slurm_logs/{job_name}"
     if not os.path.exists(slurm_out_dir):
         os.makedirs(slurm_out_dir, exist_ok=True)
         os.makedirs(slurm_out_dir + "/" + hash , exist_ok=True)
