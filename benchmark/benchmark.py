@@ -13,7 +13,7 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, 
         os.makedirs(slurm_out_dir + "/" + hash , exist_ok=True)
 
     timestamp = datetime.now().strftime("%m%d%Y_%H%M%S")
-        
+
     formatted_script = sbatch_script_content.format(
         job_name=job_name,
         image_name=config["image_name"],
@@ -73,14 +73,14 @@ def main(hashes, config, sbatch_script_content):
     else:
         total_sms = 104
         streamk_sms = 87
-    
+
     for hash in hashes:
         for algorithm in algorithms:
             for m, n, k in mnk_array:
                 max_gpus=8
                 min_gpus=1
                 num_gpus = min_gpus
-                while num_gpus <= max_gpus:    
+                while num_gpus <= max_gpus:
                     launch_sbatch(config, m, k, n, num_gpus,
                                 algorithm, total_sms, streamk_sms,
                                 hash, sbatch_script_content)
@@ -88,7 +88,7 @@ def main(hashes, config, sbatch_script_content):
 
 
 if __name__ == "__main__":
-    
+
     if len(sys.argv) < 3:
         print("Usage: python main.py <partition> <commit_hash1> <commit_hash2> ...", file=sys.stderr)
         sys.exit(1)
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     config = {
         "image_name": "rocshmem_rocm_6.2.3.sif",
         "partition": partition,
-        "time_limit": "01:00:00",
+        "time_limit": "00:10:00",
         "exclude_list": "",
     }
 
