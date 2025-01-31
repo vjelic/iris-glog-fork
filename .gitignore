@@ -12,3 +12,5 @@ __pycache__/
 slurm_logs*/
 *.ipynb
 redo.sh
+
+!dataset/*
