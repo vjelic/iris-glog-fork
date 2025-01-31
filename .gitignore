@@ -10,3 +10,4 @@ __pycache__/
 *.log
 *.txt
 slurm_logs*/
+*.ipynb
