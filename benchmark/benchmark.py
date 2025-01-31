@@ -29,13 +29,15 @@ algorithm={algorithm}
 m={m}
 n={n}
 k={k}
+output_file={output_file}
 
 echo "source /opt/conda/bin/activate py_3.10 &&\
     cd stream-k &&\
     mpirun --allow-run-as-root -np ${{num_gpus}}\
         python benchmark.py --algorithm ${{algorithm}}\
             -m ${{m}} -n ${{n}} -k ${{k}}\
-                --validate --benchmark --debug" \
+                --validate --benchmark --debug\
+                --output_file ${{output_file}}" \
     | apptainer exec --cleanenv ${{image_path}} bash
 """
 
@@ -48,6 +50,8 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm):
     if not os.path.exists(slurm_out_dir):
         os.makedirs(slurm_out_dir)
 
+    timestamp = datetime.now().strftime("%m%d%Y_%H%M%S")
+
     formatted_script = sbatch_script_content.format(
         job_name=job_name,
         image_name=config["image_name"],
@@ -59,9 +63,11 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm):
         algorithm=algorithm,
         time_limit=config["time_limit"],
         exclude_list=config["exclude_list"],
+        output_file= os.path.join(
+        "../slurm_logs", job_name, f"{job_name}_{timestamp}.json"
+    ),
     )
 
-    timestamp = datetime.now().strftime("%m%d%Y_%H%M%S")
     sbatch_script_path = os.path.join(
         "slurm_logs", job_name, f"{job_name}_{timestamp}.sbatch"
     )

@@ -4,6 +4,7 @@ import random
 import sys
 import os
 import argparse
+import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
@@ -22,6 +23,26 @@ gpu = "mi250"
 total_sm = 304 if gpu == "mi300" else 104
 
 
+class JSONWriter:
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.data = {}
+
+        if not os.path.exists(file_path):
+            with open(file_path, "w") as f:
+                json.dump({}, f)
+
+    def add_field(self, key, value):
+        self.data[key] = value
+
+    def _write_to_file(self):
+        with open(self.file_path, "w") as f:
+            json.dump(self.data, f, indent=4)
+
+    def flush(self):
+        self._write_to_file()
+        
+        
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Parse matrix dimensions and configuration."
@@ -53,6 +74,12 @@ def parse_args():
         default="all_reduce",
         choices=["all_reduce", "all_scatter"],
         help="Datatype of computation",
+    )
+    parser.add_argument(
+        "--output_file",
+        type=str,
+        default="log.json",
+        help="Output file",
     )
     parser.add_argument("--BLK_M", type=int, default=256, help="Block size M")
     parser.add_argument("--BLK_N", type=int, default=256, help="Block size N")
@@ -114,6 +141,15 @@ def main():
     args["N"] = args["n"]
     args["K"] = args["k"]
     
+    json_writer = JSONWriter(args["output_file"])
+    
+    json_writer.add_field("m", args["m"])
+    json_writer.add_field("n", args["n"])
+    json_writer.add_field("k", args["k"])
+    json_writer.add_field("algorithm", args["algorithm"])
+    json_writer.add_field("world_size", world_size)
+    
+    
     # Splitting
     if args["algorithm"] == "all_scatter":
         args["n"] = args["n"]  // world_size
@@ -155,6 +191,11 @@ def main():
 
     communication_kernel = all_scatter_kernel if args["algorithm"] == "all_scatter" else all_reduce_kernel
 
+    
+    json_writer.add_field("communication_sms", communication_sms)
+    json_writer.add_field("streamk_sms", args["streamk_sms"])
+    
+    
     
     def run_experiment():
         nonlocal local_C
@@ -219,14 +260,22 @@ def main():
 
     if args['validate']:
         matmul.set_debug(False)
-        validate_gemm(A, B, global_C, shmem)
+        success = validate_gemm(A, B, global_C, shmem)
+        json_writer.add_field("success", success)
+        
         shmem.barrier()
         shmem.log("Validation passed.")
 
     if args['benchmark']:
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
         triton_ms = triton.testing.do_bench(lambda: run_experiment())
-        shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
+        triton_tflops = perf(triton_ms)
+        shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {triton_tflops:.3f} tflops")
+        
+        json_writer.add_field("triton_tflops", triton_tflops)
+    
+    if rank == 0:
+        json_writer.flush()
 
 
 
