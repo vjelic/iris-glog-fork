@@ -106,38 +106,34 @@ if __name__ == "__main__":
 
 
     sbatch_script_content = """#!/bin/bash
-
-    #SBATCH -J {job_name}                               # Job name
-    #SBATCH -o slurm_logs/{job_name}/{job_name}.%j.out  # Name of stdout output file (%j expands to jobId)
-    #SBATCH -N 1                                        # Total number of nodes requested
-    #SBATCH -n 128                                      # Total number of mpi tasks requested
-    #SBATCH -t {time_limit}                             # Run time (hh:mm:ss)
-    #SBATCH --partition={partition}                     # Partition
-    #SBATCH --exclude={exclude_list}                    # Exclude list (e.g., node[01,13-15])
-
-    image_path=./apptainer/images/{image_name}
-
-    num_gpus={num_gpus}
-    algorithm={algorithm}
-    m={m}
-    n={n}
-    k={k}
-    output_file={output_file}
-    total_sms={total_sms}
-    streamk_sms={streamk_sms}
-    hash={hash}
-
-    echo "source /opt/conda/bin/activate py_3.10 &&\
-        git reset --hard ${{hash}}&&\
-        cd stream-k &&\
-        mpirun --allow-run-as-root -np ${{num_gpus}}\
-            python benchmark.py --algorithm ${{algorithm}}\
-                -m ${{m}} -n ${{n}} -k ${{k}}\
-                    --total_sms ${{total_sms}}\
-                    --streamk_sms ${{streamk_sms}}\
-                    --validate --benchmark --debug\
-                    --output_file ${{output_file}}" \
-        | apptainer exec --cleanenv ${{image_path}} bash
+#SBATCH -J {job_name}                               # Job name
+#SBATCH -o slurm_logs/{job_name}/{job_name}.%j.out  # Name of stdout output file (%j expands to jobId)
+#SBATCH -N 1                                        # Total number of nodes requested
+#SBATCH -n 128                                      # Total number of mpi tasks requested
+#SBATCH -t {time_limit}                             # Run time (hh:mm:ss)
+#SBATCH --partition={partition}                     # Partition
+#SBATCH --exclude={exclude_list}                    # Exclude list (e.g., node[01,13-15])
+image_path=./apptainer/images/{image_name}
+num_gpus={num_gpus}
+algorithm={algorithm}
+m={m}
+n={n}
+k={k}
+output_file={output_file}
+total_sms={total_sms}
+streamk_sms={streamk_sms}
+hash={hash}
+echo "source /opt/conda/bin/activate py_3.10 &&\
+    git reset --hard ${{hash}}&&\
+    cd stream-k &&\
+    mpirun --allow-run-as-root -np ${{num_gpus}}\
+        python benchmark.py --algorithm ${{algorithm}}\
+            -m ${{m}} -n ${{n}} -k ${{k}}\
+                --total_sms ${{total_sms}}\
+                --streamk_sms ${{streamk_sms}}\
+                --validate --benchmark --debug\
+                --output_file ${{output_file}}" \
+    | apptainer exec --cleanenv ${{image_path}} bash
     """
 
 
