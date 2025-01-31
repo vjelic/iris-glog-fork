@@ -86,8 +86,21 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm):
 
 
 def main():
-    algorithms = ["all_reduce", "all_scatter"]
-    mnk_array = [(4864, 8256, 4096)] 
+    # algorithms = ["all_reduce", "all_scatter"]
+    algorithms = ["all_reduce"]
+    mnk_array = [
+        (4864, 8256, 4096),
+        (4096, 8192, 2048),
+        (6144, 16384, 8192),
+        (8192, 32768, 16384),
+        (1024, 4096, 512),
+        (2048, 8192, 1024),
+        (3072, 12288, 6144),
+        (5120, 2048, 1024),
+        (16384, 8192, 4096),
+        (2560, 10240, 5120)
+    ]
+
     for algorithm in algorithms:
         for m, n, k in mnk_array:
             max_gpus=8
