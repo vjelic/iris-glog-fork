@@ -29,6 +29,7 @@ debug = False
 validate = True
 benchmark = True
 m, n, k = 4864, 4096, 8256
+# m, n, k = 256, 256, 256 # one tile
 
 heap_size = 1 << 30
 shmem = pyshmem.pyrocSHMEM(heap_size)
@@ -72,7 +73,7 @@ kpack = 2
 
 streamk_sms = 256
 communication_sms = total_sm - streamk_sms
-communication_block_size = 128
+communication_block_size = 256
 communication_num_threads = communication_block_size * communication_sms
 grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
 
