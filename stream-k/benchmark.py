@@ -17,6 +17,7 @@ from validation import validate_gemm
 torch.manual_seed(123)
 random.seed(123)
 
+
 class JSONWriter:
     def __init__(self, file_path):
         self.file_path = file_path
@@ -95,9 +96,7 @@ def parse_args():
     parser.add_argument(
         "--streamk_sms", type=int, default=1, help="pyrocSHMEM heap size"
     )
-    parser.add_argument(
-        "--total_sms", type=int, default=1, help="pyrocSHMEM heap size"
-    )    
+    parser.add_argument("--total_sms", type=int, default=1, help="pyrocSHMEM heap size")
     parser.add_argument(
         "--communication_block_size", type=int, default=256, help="pyrocSHMEM heap size"
     )
@@ -126,18 +125,25 @@ def main():
         print("Unknown datatype.")
         exit(1)
 
-    assert args["n"] % world_size == 0, f"N ({args['n']}) must be divisible by world size ({world_size})."
-    assert args["k"] % world_size == 0, f"K ({args['k']}) must be divisible by world size ({world_size})."
+    assert (
+        args["n"] % world_size == 0
+    ), f"N ({args['n']}) must be divisible by world size ({world_size})."
+    assert (
+        args["k"] % world_size == 0
+    ), f"K ({args['k']}) must be divisible by world size ({world_size})."
 
     A = shmem.randn(args["m"], args["k"], device="cuda", dtype=datatype)
     B = shmem.randn(args["n"], args["k"], device="cuda", dtype=datatype).T
     C = shmem.zeros((args["m"], args["n"]), device="cuda", dtype=A.dtype)
 
+    json_writer = JSONWriter(args["output_file"])
+
+    for key, value in args.items():
+        json_writer.add_field(key, value)
+
     args["M"] = args["m"]
     args["N"] = args["n"]
     args["K"] = args["k"]
-
-    json_writer = JSONWriter(args["output_file"])
 
     json_writer.add_field("m", args["m"])
     json_writer.add_field("n", args["n"])
@@ -145,10 +151,9 @@ def main():
     json_writer.add_field("algorithm", args["algorithm"])
     json_writer.add_field("world_size", world_size)
 
-
     # Splitting
     if args["algorithm"] == "all_scatter":
-        args["n"] = args["n"]  // world_size
+        args["n"] = args["n"] // world_size
         local_B = B[:, rank * args["n"] : (rank + 1) * args["n"]].clone()
         local_A = A
     elif args["algorithm"] == "all_reduce":
@@ -168,33 +173,42 @@ def main():
     total_tiles = total_blocks_M * total_blocks_N
 
     if args["streamk_sms"] >= args["total_sms"]:
-        print(f"Invalid number of stream-K SMs. {args['streamk_sms']} >= {args['total_sms']}")
+        print(
+            f"Invalid number of stream-K SMs. {args['streamk_sms']} >= {args['total_sms']}"
+        )
         exit(1)
-
 
     communication_sms = args["total_sms"] - args["streamk_sms"]
 
-    communication_num_threads = args["communication_block_size"]  * communication_sms
+    communication_num_threads = args["communication_block_size"] * communication_sms
     grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
 
-    locks = shmem.zeros((args["streamk_sms"] ,), device="cuda", dtype=torch.int32)
+    locks = shmem.zeros((args["streamk_sms"],), device="cuda", dtype=torch.int32)
     tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
-    P = shmem.zeros((args["streamk_sms"] , args["BLK_M"] * args["BLK_N"]), device="cuda", dtype=torch.float32)
+    P = shmem.zeros(
+        (args["streamk_sms"], args["BLK_M"] * args["BLK_N"]),
+        device="cuda",
+        dtype=torch.float32,
+    )
     bias = None
 
     gemm_stream = torch.cuda.Stream()
     comm_stream = torch.cuda.Stream()
 
-    communication_kernel = all_scatter_kernel if args["algorithm"] == "all_scatter" else all_reduce_kernel
-
+    communication_kernel = (
+        all_scatter_kernel if args["algorithm"] == "all_scatter" else all_reduce_kernel
+    )
 
     json_writer.add_field("communication_sms", communication_sms)
     json_writer.add_field("streamk_sms", args["streamk_sms"])
 
-
+    comm_registers = 0
+    comm_spills = 0
 
     def run_experiment():
         nonlocal local_C
+        nonlocal comm_registers
+        nonlocal comm_spills
         torch.cuda.nvtx.range_push(f"GEMM + Communication")
         torch.cuda.nvtx.range_push(f"GEMM")
         with torch.cuda.stream(gemm_stream):
@@ -207,17 +221,17 @@ def main():
                 locks,
                 tile_completed,
                 rank,
-                args["streamk_sms"] ,
+                args["streamk_sms"],
                 args["BLK_M"],
                 args["BLK_N"],
                 args["BLK_K"],
                 args["gsize_m"],
-                args["two_tiles"] ,
-                args["num_stages"] ,
-                args["num_warps"] ,
-                args["waves_per_eu"] ,
-                args["mfmaInstrSize"] ,
-                args["kpack"] ,
+                args["two_tiles"],
+                args["num_stages"],
+                args["num_warps"],
+                args["waves_per_eu"],
+                args["mfmaInstrSize"],
+                args["kpack"],
             )
 
         # All scatter kernel
@@ -241,10 +255,11 @@ def main():
                 total_tiles,
                 rank,
                 world_size,
-                BLOCK_SIZE=args["communication_block_size"] ,
+                BLOCK_SIZE=args["communication_block_size"],
                 NUM_SMS=communication_sms,
             )
-
+            comm_registers = ss.n_regs
+            comm_spills = ss.n_spills
             shmem.log_debug(f"{ss.n_regs} registers used, {ss.n_spills} spills")
 
         torch.cuda.nvtx.range_pop()
@@ -254,7 +269,15 @@ def main():
 
     run_experiment()
 
-    if args['validate']:
+    streamk_registers = matmul.streamk_registers
+    streamk_spills = matmul.streamk_spills
+
+    json_writer.add_field("comm_registers", comm_registers)
+    json_writer.add_field("comm_spills", comm_spills)
+    json_writer.add_field("streamk_registers", streamk_registers)
+    json_writer.add_field("streamk_spills", streamk_spills)
+
+    if args["validate"]:
         matmul.set_debug(False)
         success = validate_gemm(A, B, global_C, shmem)
         json_writer.add_field("success", success)
@@ -262,17 +285,18 @@ def main():
         shmem.barrier()
         shmem.log("Validation passed.")
 
-    if args['benchmark']:
+    if args["benchmark"]:
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
         triton_ms = triton.testing.do_bench(lambda: run_experiment())
         triton_tflops = perf(triton_ms)
-        shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {triton_tflops:.3f} tflops")
+        shmem.log_stats(
+            f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {triton_tflops:.3f} tflops"
+        )
 
         json_writer.add_field("triton_tflops", triton_tflops)
 
     if rank == 0:
         json_writer.flush()
-
 
 
 if __name__ == "__main__":

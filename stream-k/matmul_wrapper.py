@@ -14,6 +14,7 @@ gpu = "mi250"
 num_xcds = 8 if gpu == "mi300" else 1
 gemm_kernel = persistent_gemm
 
+
 class matmul(torch.autograd.Function):
 
     _debug = True
@@ -21,6 +22,8 @@ class matmul(torch.autograd.Function):
     @staticmethod
     def set_debug(debug: bool):
         matmul._debug = debug
+        matmul.streamk_registers = 0
+        matmul.streamk_spills = 0
 
     @staticmethod
     def _call(
@@ -129,6 +132,8 @@ class matmul(torch.autograd.Function):
         )
 
         if matmul._debug:
+            matmul.streamk_registers = kk.n_regs
+            matmul.streamk_spills = kk.n_spills
             print(f"{kk.n_regs} registers used, {kk.n_spills} spills")
             # print(kk.asm['ttgir'])
             # print(kk.asm['amdgcn'])
