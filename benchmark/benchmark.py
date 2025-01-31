@@ -57,7 +57,7 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, 
     slurm_out_dir = f"slurm_log/{job_name}"
     if not os.path.exists(slurm_out_dir):
         os.makedirs(slurm_out_dir, exist_ok=True)
-        os.makedirs(slurm_out_dir + hash , exist_ok=True)
+        os.makedirs(slurm_out_dir + "/" + hash , exist_ok=True)
 
     timestamp = datetime.now().strftime("%m%d%Y_%H%M%S")
         
