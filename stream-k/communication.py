@@ -40,7 +40,7 @@ def tile_id_to_index_range(
     rm = tl.max_contiguous(tl.multiple_of(rm, BLOCK_SIZE_M), BLOCK_SIZE_M)
     rn = tl.max_contiguous(tl.multiple_of(rn, BLOCK_SIZE_N), BLOCK_SIZE_N)
 
-    return rm, rn
+    return rm, rn, rm_start, rn_start
 
 
 @triton.jit
@@ -52,16 +52,16 @@ def offset_for_tile(
     M_local,
     N_local
 ):
-    rm, rn =  tile_id_to_index_range(
-            local_tile_id, M_local, N_local,
-            BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M
-        )
+    rm, rn, rm_start, rn_start = tile_id_to_index_range(
+        local_tile_id, M_local, N_local,
+        BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M
+    )
     c_mask = (rm[:, None] < M_local) & (rn[None, :] < N_local)
-    return rm, rn, c_mask
+    return rm, rn, c_mask, rm_start, rn_start
 
 @triton.jit
 def extract_submask_and_offset(
-    rm, rn, mask, offset,
+    rm, rn, mask, rm_start, rn_start,
     start_row, start_col,
     SUB_BLOCK_SIZE_M: tl.constexpr,
     SUB_BLOCK_SIZE_N: tl.constexpr,
@@ -81,8 +81,8 @@ def extract_submask_and_offset(
     # Compute the sub-mask
     sub_mask = (sub_rm_2d < BLOCK_SIZE_M) & (sub_rn_2d < BLOCK_SIZE_N)
 
-    # Compute the sub-offset manually using strides
-    sub_offset = (sub_rm_2d * stride_cm_local) + (sub_rn_2d * stride_cn_local)
+    # Compute the sub-offset relative to the start of the tile
+    sub_offset = ((rm_start + sub_rm_2d) * stride_cm_local) + ((rn_start + sub_rn_2d) * stride_cn_local)
 
     return sub_mask, sub_offset
 
@@ -126,39 +126,46 @@ def all_reduce_kernel(
             )
 
         # Consume the tile in sub-tiles
-        rm, rn, mask = offset_for_tile(
+        rm, rn, mask, rm_start, rn_start = offset_for_tile(
             tile, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M,
             M_local, N_local
         )
 
-        offset = rm[:, None] * stride_cm_local + rn[None, :] * stride_cn_local
+        # Calculate the number of sub-tiles in each dimension
+        num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, REDUCTION_TILE_M)
+        num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, REDUCTION_TILE_N)
+        total_sub_tiles = num_sub_tiles_m * num_sub_tiles_n
 
-        # Iterate over the tile in reduction blocks
-        for start_row in range(0, BLOCK_SIZE_M, REDUCTION_TILE_M):
-            for start_col in range(0, BLOCK_SIZE_N, REDUCTION_TILE_N):
-                # Extract the sub-mask and sub-offset for the current sub-block
-                sub_mask, sub_offset = extract_submask_and_offset(
-                    rm, rn, mask, offset,
-                    start_row, start_col,
-                    REDUCTION_TILE_M, REDUCTION_TILE_N,
-                    BLOCK_SIZE_M, BLOCK_SIZE_N,
-                    stride_cm_local, stride_cn_local
+        # Flattened loop over all sub-tiles, triton is 
+        # better at handling flat loops instead of nested loops
+        for sub_tile_idx in range(0, total_sub_tiles):
+            # Calculate start_row and start_col for the current sub-tile
+            start_row = (sub_tile_idx // num_sub_tiles_n) * REDUCTION_TILE_M
+            start_col = (sub_tile_idx % num_sub_tiles_n) * REDUCTION_TILE_N
+
+            # Extract the sub-mask and sub-offset for the current sub-block
+            sub_mask, sub_offset = extract_submask_and_offset(
+                rm, rn, mask, rm_start, rn_start,
+                start_row, start_col,
+                REDUCTION_TILE_M, REDUCTION_TILE_N,
+                BLOCK_SIZE_M, BLOCK_SIZE_N,
+                stride_cm_local, stride_cn_local
+            )
+
+            # Load data from the local partial result
+            data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask)
+
+            # Store data to the global result using atomic_add
+            for remote_rank in range(world_size):
+                pyshmem.atomic_add(
+                    c + sub_offset,
+                    data,
+                    cur_rank,
+                    remote_rank,
+                    heap_bases,
+                    mask=sub_mask,
+                    sem="relaxed"
                 )
-
-                # data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask)
-                data = tl.load(tl.multiple_of(local_C_partial_ptr + sub_offset, (16, 16)), mask=sub_mask)
-
-                # Store
-                for remote_rank in range(world_size):
-                    pyshmem.atomic_add(
-                        c + sub_offset,
-                        data,
-                        cur_rank,
-                        remote_rank,
-                        heap_bases,
-                        mask=sub_mask,
-                        sem="relaxed"
-                    )
 
 @triton.jit
 def all_scatter_kernel(
