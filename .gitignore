@@ -11,3 +11,4 @@ __pycache__/
 *.txt
 slurm_logs*/
 *.ipynb
+redo.sh
