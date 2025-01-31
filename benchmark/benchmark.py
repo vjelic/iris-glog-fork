@@ -1,17 +1,11 @@
 import subprocess
-import tempfile
 import os
-import itertools
-import shutil
 from datetime import datetime
 
 
 config = {
-    "email": "muhaawad@amd.com",
     "image_name": "rocshmem_rocm_6.2.3.sif",
-    "jobs": 32,
     "partition": "mi2508x",
-    "root_path": os.path.expanduser("~/git/git/amd/pdp/fused_gemm"),
     "gpu": "mi300",
     "time_limit": "06:00:00",
     "exclude_list": "",
@@ -27,8 +21,6 @@ sbatch_script_content = """#!/bin/bash
 #SBATCH -n 128                                      # Total number of mpi tasks requested
 #SBATCH -t {time_limit}                             # Run time (hh:mm:ss)
 #SBATCH --partition={partition}                     # Partition
-#SBATCH --mail-type=END                             # Mail events (NONE, BEGIN, END, FAIL, ALL)
-#SBATCH --mail-user={email}                         # Email address
 #SBATCH --exclude={exclude_list}                    # Exclude list (e.g., node[01,13-15])
 
 image_path=./apptainer/images/{image_name}
@@ -59,9 +51,7 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm):
 
     formatted_script = sbatch_script_content.format(
         job_name=job_name,
-        email=config["email"],
         image_name=config["image_name"],
-        jobs=config["jobs"],
         partition=config["partition"],
         m=m,
         n=n,
