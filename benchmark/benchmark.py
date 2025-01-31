@@ -126,13 +126,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Process partition and commit hashes.")
     parser.add_argument(
-        "partition", nargs="?", default=None, help="The partition name (optional)"
+        "--partition", nargs="?", default=None, help="The partition name (optional)"
     )
     parser.add_argument(
-        "commit_before", nargs="?", default=None, help="Commit hash before (optional)"
+        "--commit_before", nargs="?", default=None, help="Commit hash before (optional)"
     )
     parser.add_argument(
-        "commit_after", nargs="?", default=None, help="Commit hash after (optional)"
+        "--commit_after", nargs="?", default=None, help="Commit hash after (optional)"
     )
     args = parser.parse_args()
     partition = args.partition
