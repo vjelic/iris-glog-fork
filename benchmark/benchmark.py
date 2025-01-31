@@ -1,9 +1,9 @@
 import subprocess
 import os
 from datetime import datetime
-import sys
 import argparse
 import subprocess
+import json
 
 
 def launch_sbatch(
@@ -80,19 +80,12 @@ def launch_sbatch(
 def main(hashes, config, sbatch_script_content):
     # algorithms = ["all_reduce", "all_scatter"]
     algorithms = ["all_reduce"]
-    mkn_array = [
-        (4864, 8256, 4096),
-        (4096, 8192, 2048),
-        (6144, 16384, 8192),
-        (8192, 32768, 16384),
-        (1024, 4096, 512),
-        (2048, 8192, 1024),
-        (3072, 12288, 6144),
-        (5120, 2048, 1024),
-        (16384, 8192, 4096),
-        (2560, 10240, 5120),
-    ]
 
+    dataset_file = "dataset/deepseek-coder-6.7b-base.json"
+    with open(dataset_file, "r") as file:
+        data = json.load(file)
+
+    unique_mkn = list(set((entry["m"], entry["k"], entry["n"]) for entry in data))
     if partition == "mi3008x":
         total_sms = 304
         streamk_sms = 256
@@ -102,7 +95,7 @@ def main(hashes, config, sbatch_script_content):
 
     for hash in hashes:
         for algorithm in algorithms:
-            for m, k, n in mkn_array:
+            for m, k, n in unique_mkn:
                 max_gpus = 8
                 min_gpus = 1
                 num_gpus = min_gpus
@@ -178,6 +171,7 @@ echo "source /opt/conda/bin/activate py_3.10 &&\
                 --total_sms ${{total_sms}}\
                 --streamk_sms ${{streamk_sms}}\
                 --validate --benchmark --debug\
+                --heap_size 8589934592\
                 --output_file ${{output_file}}" \
     | apptainer exec --cleanenv ${{image_path}} bash
     """
