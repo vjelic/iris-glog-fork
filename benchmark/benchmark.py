@@ -3,54 +3,7 @@ import os
 from datetime import datetime
 import sys
 
-# partition = "mi2508x"
-partition = "mi3008x"
-
-config = {
-    "image_name": "rocshmem_rocm_6.2.3.sif",
-    "partition": partition,
-    "time_limit": "01:00:00",
-    "exclude_list": "",
-}
-
-
-sbatch_script_content = """#!/bin/bash
-
-#SBATCH -J {job_name}                               # Job name
-#SBATCH -o slurm_logs/{job_name}/{job_name}.%j.out  # Name of stdout output file (%j expands to jobId)
-#SBATCH -N 1                                        # Total number of nodes requested
-#SBATCH -n 128                                      # Total number of mpi tasks requested
-#SBATCH -t {time_limit}                             # Run time (hh:mm:ss)
-#SBATCH --partition={partition}                     # Partition
-#SBATCH --exclude={exclude_list}                    # Exclude list (e.g., node[01,13-15])
-
-image_path=./apptainer/images/{image_name}
-
-num_gpus={num_gpus}
-algorithm={algorithm}
-m={m}
-n={n}
-k={k}
-output_file={output_file}
-total_sms={total_sms}
-streamk_sms={streamk_sms}
-hash={hash}
-
-echo "source /opt/conda/bin/activate py_3.10 &&\
-    git reset --hard ${{hash}}&&\
-    cd stream-k &&\
-    mpirun --allow-run-as-root -np ${{num_gpus}}\
-        python benchmark.py --algorithm ${{algorithm}}\
-            -m ${{m}} -n ${{n}} -k ${{k}}\
-                --total_sms ${{total_sms}}\
-                --streamk_sms ${{streamk_sms}}\
-                --validate --benchmark --debug\
-                --output_file ${{output_file}}" \
-    | apptainer exec --cleanenv ${{image_path}} bash
-"""
-
-
-def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, hash):
+def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, hash, sbatch_script_content):
 
     job_name = f"{hash}/{algorithm}_{m}-{k}-{n}_{num_gpus}"
 
@@ -97,7 +50,7 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, 
         print(f"Error message: {e.stderr}")
 
 
-def main(hashes):
+def main(hashes, confi, sbatch_script_content):
     # algorithms = ["all_reduce", "all_scatter"]
     algorithms = ["all_reduce"]
     mnk_array = [
@@ -130,17 +83,66 @@ def main(hashes):
                 while num_gpus <= max_gpus:    
                     launch_sbatch(config, m, k, n, num_gpus,
                                 algorithm, total_sms, streamk_sms,
-                                hash)
+                                hash, sbatch_script_content)
                     num_gpus *= 2
 
 
 if __name__ == "__main__":
     
-    if len(sys.argv) < 2:
-        print("Usage: python main.py <commit_hash1> <commit_hash2> ...", file=sys.stderr)
+    if len(sys.argv) < 3:
+        print("Usage: python main.py <partition> <commit_hash1> <commit_hash2> ...", file=sys.stderr)
         sys.exit(1)
 
-    commit_hashes = sys.argv[1:]
-    print("Commit Hashes Array:", commit_hashes)
+    # partition = "mi2508x"
+    # partition = "mi3008x"
+    partition = sys.argv[1]
 
-    main(commit_hashes)
+    config = {
+        "image_name": "rocshmem_rocm_6.2.3.sif",
+        "partition": partition,
+        "time_limit": "01:00:00",
+        "exclude_list": "",
+    }
+
+
+    sbatch_script_content = """#!/bin/bash
+
+    #SBATCH -J {job_name}                               # Job name
+    #SBATCH -o slurm_logs/{job_name}/{job_name}.%j.out  # Name of stdout output file (%j expands to jobId)
+    #SBATCH -N 1                                        # Total number of nodes requested
+    #SBATCH -n 128                                      # Total number of mpi tasks requested
+    #SBATCH -t {time_limit}                             # Run time (hh:mm:ss)
+    #SBATCH --partition={partition}                     # Partition
+    #SBATCH --exclude={exclude_list}                    # Exclude list (e.g., node[01,13-15])
+
+    image_path=./apptainer/images/{image_name}
+
+    num_gpus={num_gpus}
+    algorithm={algorithm}
+    m={m}
+    n={n}
+    k={k}
+    output_file={output_file}
+    total_sms={total_sms}
+    streamk_sms={streamk_sms}
+    hash={hash}
+
+    echo "source /opt/conda/bin/activate py_3.10 &&\
+        git reset --hard ${{hash}}&&\
+        cd stream-k &&\
+        mpirun --allow-run-as-root -np ${{num_gpus}}\
+            python benchmark.py --algorithm ${{algorithm}}\
+                -m ${{m}} -n ${{n}} -k ${{k}}\
+                    --total_sms ${{total_sms}}\
+                    --streamk_sms ${{streamk_sms}}\
+                    --validate --benchmark --debug\
+                    --output_file ${{output_file}}" \
+        | apptainer exec --cleanenv ${{image_path}} bash
+    """
+
+
+    commit_hashes = sys.argv[2:]
+    print("Commit Hashes Array:", commit_hashes)
+    print("partition:", partition)
+
+    main(commit_hashes, sbatch_script_content)
