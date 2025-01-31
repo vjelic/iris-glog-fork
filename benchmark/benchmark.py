@@ -2,15 +2,29 @@ import subprocess
 import os
 from datetime import datetime
 import sys
+import argparse
+import subprocess
 
-def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, hash, sbatch_script_content):
+
+def launch_sbatch(
+    config,
+    m,
+    k,
+    n,
+    num_gpus,
+    algorithm,
+    total_sms,
+    streamk_sms,
+    hash,
+    sbatch_script_content,
+):
 
     job_name = f"{hash}/{algorithm}_{m}-{k}-{n}_{num_gpus}"
 
     slurm_out_dir = f"slurm_logs/{job_name}"
     if not os.path.exists(slurm_out_dir):
         os.makedirs(slurm_out_dir, exist_ok=True)
-        os.makedirs(slurm_out_dir + "/" + hash , exist_ok=True)
+        os.makedirs(slurm_out_dir + "/" + hash, exist_ok=True)
 
     timestamp = datetime.now().strftime("%m%d%Y_%H%M%S")
 
@@ -25,12 +39,12 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, 
         algorithm=algorithm,
         time_limit=config["time_limit"],
         exclude_list=config["exclude_list"],
-        total_sms = total_sms,
-        streamk_sms = streamk_sms,
-        hash = hash,
-        output_file= os.path.join(
-        "../slurm_logs", job_name, f"{job_name}_{timestamp}.json"
-    ),
+        total_sms=total_sms,
+        streamk_sms=streamk_sms,
+        hash=hash,
+        output_file=os.path.join(
+            "../slurm_logs", job_name, f"{job_name}_{timestamp}.json"
+        ),
     )
 
     sbatch_script_path = os.path.join(
@@ -41,9 +55,22 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, 
     print(f"SBATCH script saved at: {sbatch_script_path}")
 
     try:
-        subprocess.run(
-            ["sbatch", sbatch_script_path], capture_output=True, text=True, check=True
-        )
+        if config["partition"] is None:
+            os.chmod(sbatch_script_path, 0o755)
+            subprocess.run(
+                sbatch_script_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        else:
+            subprocess.run(
+                ["sbatch", sbatch_script_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
         print(f"Successfully submitted job: {job_name}")
     except subprocess.CalledProcessError as e:
         print(f"Error submitting job: {job_name}")
@@ -63,9 +90,8 @@ def main(hashes, config, sbatch_script_content):
         (3072, 12288, 6144),
         (5120, 2048, 1024),
         (16384, 8192, 4096),
-        (2560, 10240, 5120)
+        (2560, 10240, 5120),
     ]
-
 
     if partition == "mi3008x":
         total_sms = 304
@@ -77,25 +103,44 @@ def main(hashes, config, sbatch_script_content):
     for hash in hashes:
         for algorithm in algorithms:
             for m, k, n in mkn_array:
-                max_gpus=8
-                min_gpus=1
+                max_gpus = 8
+                min_gpus = 1
                 num_gpus = min_gpus
                 while num_gpus <= max_gpus:
-                    launch_sbatch(config, m, k, n, num_gpus,
-                                algorithm, total_sms, streamk_sms,
-                                hash, sbatch_script_content)
+                    launch_sbatch(
+                        config,
+                        m,
+                        k,
+                        n,
+                        num_gpus,
+                        algorithm,
+                        total_sms,
+                        streamk_sms,
+                        hash,
+                        sbatch_script_content,
+                    )
                     num_gpus *= 2
 
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 3:
-        print("Usage: python main.py <partition> <commit_hash1> <commit_hash2> ...", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Process partition and commit hashes.")
+    parser.add_argument(
+        "partition", nargs="?", default=None, help="The partition name (optional)"
+    )
+    parser.add_argument(
+        "commit_before", nargs="?", default=None, help="Commit hash before (optional)"
+    )
+    parser.add_argument(
+        "commit_after", nargs="?", default=None, help="Commit hash after (optional)"
+    )
+    args = parser.parse_args()
+    partition = args.partition
 
-    # partition = "mi2508x"
-    # partition = "mi3008x"
-    partition = sys.argv[1]
+    commit_before = args.commit_before or "latest"
+    commit_after = args.commit_after or "latest"
+
+    commit_hashes = list(dict.fromkeys([commit_before, commit_after]))
 
     config = {
         "image_name": "rocshmem_rocm_6.2.3.sif",
@@ -103,7 +148,6 @@ if __name__ == "__main__":
         "time_limit": "00:10:00",
         "exclude_list": "",
     }
-
 
     sbatch_script_content = """#!/bin/bash
 #SBATCH -J {job_name}                               # Job name
@@ -124,7 +168,9 @@ total_sms={total_sms}
 streamk_sms={streamk_sms}
 hash={hash}
 echo "source /opt/conda/bin/activate py_3.10 &&\
-    git reset --hard ${{hash}}&&\
+    if [ \"${{hash}}\" != \"latest\" ]; then \
+        git reset --hard ${{hash}}; \
+    fi && \
     cd stream-k &&\
     mpirun --allow-run-as-root -np ${{num_gpus}}\
         python benchmark.py --algorithm ${{algorithm}}\
@@ -135,10 +181,5 @@ echo "source /opt/conda/bin/activate py_3.10 &&\
                 --output_file ${{output_file}}" \
     | apptainer exec --cleanenv ${{image_path}} bash
     """
-
-
-    commit_hashes = sys.argv[2:]
-    print("Commit Hashes Array:", commit_hashes)
-    print("partition:", partition)
 
     main(commit_hashes, config, sbatch_script_content)
