@@ -6,7 +6,6 @@ from datetime import datetime
 config = {
     "image_name": "rocshmem_rocm_6.2.3.sif",
     "partition": "mi2508x",
-    "gpu": "mi300",
     "time_limit": "06:00:00",
     "exclude_list": "",
     "start_with_empty": True,
