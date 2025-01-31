@@ -53,7 +53,7 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, 
 def main(hashes, config, sbatch_script_content):
     # algorithms = ["all_reduce", "all_scatter"]
     algorithms = ["all_reduce"]
-    mnk_array = [
+    mkn_array = [
         (4864, 8256, 4096),
         (4096, 8192, 2048),
         (6144, 16384, 8192),
@@ -76,7 +76,7 @@ def main(hashes, config, sbatch_script_content):
 
     for hash in hashes:
         for algorithm in algorithms:
-            for m, n, k in mnk_array:
+            for m, k, n in mkn_array:
                 max_gpus=8
                 min_gpus=1
                 num_gpus = min_gpus
