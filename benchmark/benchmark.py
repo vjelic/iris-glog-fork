@@ -145,7 +145,7 @@ if __name__ == "__main__":
     config = {
         "image_name": "rocshmem_rocm_6.2.3.sif",
         "partition": partition,
-        "time_limit": "00:10:00",
+        "time_limit": "00:05:00",
         "exclude_list": "",
     }
 
