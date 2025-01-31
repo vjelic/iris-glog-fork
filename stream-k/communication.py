@@ -70,6 +70,8 @@ def all_reduce_kernel(
     N_local,
     stride_cm_local,
     stride_cn_local,
+    stride_cm_global,
+    stride_cn_global,    
     BLOCK_SIZE_M: tl.constexpr,
     BLOCK_SIZE_N: tl.constexpr,
     GROUP_SIZE_M: tl.constexpr,

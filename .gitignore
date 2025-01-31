@@ -9,3 +9,4 @@ __pycache__/
 *.pftrace
 *.log
 *.txt
+slurm_logs/
