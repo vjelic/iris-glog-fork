@@ -50,7 +50,7 @@ def launch_sbatch(config, m, k, n, num_gpus, algorithm, total_sms, streamk_sms, 
         print(f"Error message: {e.stderr}")
 
 
-def main(hashes, confi, sbatch_script_content):
+def main(hashes, config, sbatch_script_content):
     # algorithms = ["all_reduce", "all_scatter"]
     algorithms = ["all_reduce"]
     mnk_array = [
@@ -145,4 +145,4 @@ if __name__ == "__main__":
     print("Commit Hashes Array:", commit_hashes)
     print("partition:", partition)
 
-    main(commit_hashes, sbatch_script_content)
+    main(commit_hashes, config, sbatch_script_content)
