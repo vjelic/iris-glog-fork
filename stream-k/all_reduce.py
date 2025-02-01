@@ -135,6 +135,8 @@ def run_experiment():
             n,
             local_C.stride(0),
             local_C.stride(1),
+            C.stride(0),
+            C.stride(1),
             BLK_M,
             BLK_N,
             gsize_m,

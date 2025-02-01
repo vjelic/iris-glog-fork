@@ -79,6 +79,8 @@ def parse_args():
     parser.add_argument("--BLK_M", type=int, default=256, help="Block size M")
     parser.add_argument("--BLK_N", type=int, default=256, help="Block size N")
     parser.add_argument("--BLK_K", type=int, default=32, help="Block size K")
+    parser.add_argument("--REDUCTION_TILE_M", type=int, default=128, help="M tile size for reduction")
+    parser.add_argument("--REDUCTION_TILE_N", type=int, default=128, help="N tile size for reduction")
     parser.add_argument("--gsize_m", type=int, default=8, help="Grid size M")
     parser.add_argument("--two_tiles", type=str, default="True", help="Use two tiles")
     parser.add_argument("--num_stages", type=int, default=1, help="Number of stages")
@@ -94,9 +96,9 @@ def parse_args():
         "--heap_size", type=int, default=1 << 32, help="pyrocSHMEM heap size"
     )
     parser.add_argument(
-        "--streamk_sms", type=int, default=1, help="pyrocSHMEM heap size"
+        "--streamk_sms", type=int, default=8, help="pyrocSHMEM heap size"
     )
-    parser.add_argument("--total_sms", type=int, default=1, help="pyrocSHMEM heap size")
+    parser.add_argument("--total_sms", type=int, default=16, help="pyrocSHMEM heap size")
     parser.add_argument(
         "--communication_block_size", type=int, default=256, help="pyrocSHMEM heap size"
     )
@@ -195,10 +197,6 @@ def main():
     gemm_stream = torch.cuda.Stream()
     comm_stream = torch.cuda.Stream()
 
-    communication_kernel = (
-        all_scatter_kernel if args["algorithm"] == "all_scatter" else all_reduce_kernel
-    )
-
     json_writer.add_field("communication_sms", communication_sms)
     json_writer.add_field("streamk_sms", args["streamk_sms"])
 
@@ -234,30 +232,53 @@ def main():
                 args["kpack"],
             )
 
-        # All scatter kernel
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push(f"Communication")
         with torch.cuda.stream(comm_stream):
-            ss = communication_kernel[grid](
-                local_C,
-                global_C,
-                tile_completed,
-                shmem.get_heap_bases(),
-                args["m"],
-                args["n"],
-                local_C.stride(0),
-                local_C.stride(1),
-                C.stride(0),
-                C.stride(1),
-                args["BLK_M"],
-                args["BLK_N"],
-                args["gsize_m"],
-                total_tiles,
-                rank,
-                world_size,
-                BLOCK_SIZE=args["communication_block_size"],
-                NUM_SMS=communication_sms,
-            )
+            if args["algorithm"] == "all_scatter":
+                ss = all_scatter_kernel[grid](
+                    local_C,
+                    global_C,
+                    tile_completed,
+                    shmem.get_heap_bases(),
+                    args["m"],
+                    args["n"],
+                    local_C.stride(0),
+                    local_C.stride(1),
+                    C.stride(0),
+                    C.stride(1),
+                    args["BLK_M"],
+                    args["BLK_N"],
+                    args["gsize_m"],
+                    total_tiles,
+                    rank,
+                    world_size,
+                    BLOCK_SIZE=args["communication_block_size"],
+                    NUM_SMS=communication_sms,
+                )
+            else:
+                ss = all_reduce_kernel[grid](
+                    local_C,
+                    global_C,
+                    tile_completed,
+                    shmem.get_heap_bases(),
+                    args["m"],
+                    args["n"],
+                    local_C.stride(0),
+                    local_C.stride(1),
+                    C.stride(0),
+                    C.stride(1),
+                    args["BLK_M"],
+                    args["BLK_N"],
+                    args["gsize_m"],
+                    total_tiles,
+                    rank,
+                    world_size,
+                    BLOCK_SIZE=args["communication_block_size"],
+                    NUM_SMS=communication_sms,
+                    REDUCTION_TILE_M=args["REDUCTION_TILE_M"],
+                    REDUCTION_TILE_N=args["REDUCTION_TILE_N"],
+                )                
             comm_registers = ss.n_regs
             comm_spills = ss.n_spills
             shmem.log_debug(f"{ss.n_regs} registers used, {ss.n_spills} spills")
