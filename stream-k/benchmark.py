@@ -203,13 +203,33 @@ def main():
     comm_registers = 0
     comm_spills = 0
 
+    kernel_timing = {
+        "streamk": {
+            "start_event": torch.cuda.Event(enable_timing=True),
+            "end_event": torch.cuda.Event(enable_timing=True),
+            "ms": 0,
+            "experiments": 0,
+        },
+        "communication": {
+            "start_event": torch.cuda.Event(enable_timing=True),
+            "end_event": torch.cuda.Event(enable_timing=True),
+            "ms": 0,
+            "experiments": 0,
+
+        }
+    }
+
+
     def run_experiment():
         nonlocal local_C
+        nonlocal global_C
         nonlocal comm_registers
         nonlocal comm_spills
+        nonlocal kernel_timing
         torch.cuda.nvtx.range_push(f"GEMM + Communication")
         torch.cuda.nvtx.range_push(f"GEMM")
         with torch.cuda.stream(gemm_stream):
+            kernel_timing["streamk"]["start_event"].record()
             local_C = matmul.apply(
                 local_A,
                 local_B,
@@ -231,10 +251,13 @@ def main():
                 args["mfmaInstrSize"],
                 args["kpack"],
             )
+            kernel_timing["streamk"]["end_event"].record()
+            kernel_timing["streamk"]["experiments"] += 1
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push(f"Communication")
         with torch.cuda.stream(comm_stream):
+            kernel_timing["communication"]["start_event"].record()
             if args["algorithm"] == "all_scatter":
                 ss = all_scatter_kernel[grid](
                     local_C,
@@ -278,17 +301,30 @@ def main():
                     NUM_SMS=communication_sms,
                     REDUCTION_TILE_M=args["REDUCTION_TILE_M"],
                     REDUCTION_TILE_N=args["REDUCTION_TILE_N"],
-                )                
+                )
+            kernel_timing["communication"]["end_event"].record()
+            kernel_timing["communication"]["experiments"] += 1
+
             comm_registers = ss.n_regs
             comm_spills = ss.n_spills
-            shmem.log_debug(f"{ss.n_regs} registers used, {ss.n_spills} spills")
+            shmem.log_debug(f"Communication kernel: {ss.n_regs} registers used, {ss.n_spills} spills")
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.synchronize()
+        for k in ["streamk", "communication"]:
+            ms = kernel_timing[k]["start_event"].elapsed_time(kernel_timing[k]["end_event"])
+            kernel_timing[k]["ms"] += ms
+
         shmem.barrier()
         torch.cuda.nvtx.range_pop()
 
     run_experiment()
+
+    for k in ["streamk", "communication"]:
+        kernel_timing[k]["ms"]= 0
+        kernel_timing[k]["experiments"]= 0
+
+
 
     streamk_registers = matmul.streamk_registers
     streamk_spills = matmul.streamk_spills
@@ -308,13 +344,19 @@ def main():
 
     if args["benchmark"]:
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
-        triton_ms = triton.testing.do_bench(lambda: run_experiment())
+        triton_ms = triton.testing.do_bench(run_experiment())
         triton_tflops = perf(triton_ms)
         shmem.log_stats(
             f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {triton_tflops:.3f} tflops"
         )
 
         json_writer.add_field("triton_tflops", triton_tflops)
+        json_writer.add_field("triton_ms", triton_ms)
+
+        for k in ["streamk", "communication"]:
+            json_writer.add_field(k + "_ms", kernel_timing[k]["ms"] / kernel_timing[k]["experiments"])
+            json_writer.add_field(k + "_experiments", kernel_timing[k]["experiments"])
+
 
     if rank == 0:
         json_writer.flush()
