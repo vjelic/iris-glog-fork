@@ -97,7 +97,7 @@ def all_reduce_kernel(
     stride_cm_local,
     stride_cn_local,
     stride_cm_global,
-    stride_cn_global,    
+    stride_cn_global,
     BLOCK_SIZE_M: tl.constexpr,
     BLOCK_SIZE_N: tl.constexpr,
     GROUP_SIZE_M: tl.constexpr,
@@ -138,7 +138,7 @@ def all_reduce_kernel(
         num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, REDUCTION_TILE_N)
         total_sub_tiles = num_sub_tiles_m * num_sub_tiles_n
 
-        # Flattened loop over all sub-tiles, triton is 
+        # Flattened loop over all sub-tiles, triton is
         # better at handling flat loops instead of nested loops
         for sub_tile_idx in range(0, total_sub_tiles):
             # Calculate start_row and start_col for the current sub-tile

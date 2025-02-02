@@ -14,7 +14,7 @@ random.seed(123)
 gpu = "mi300"
 gpu = "mi250"
 
-total_sm = 304 
+total_sm = 304
 # if gpu == "mi300" else 104
 
 from communication import all_reduce_kernel
