@@ -87,7 +87,15 @@ def extract_submask_and_offset(
     return sub_mask, sub_offset
 
 @triton.jit
+def read_realtime():
+    tmp = tl.inline_asm_elementwise(asm="s_waitcnt vmcnt(0); s_memrealtime $0; s_waitcnt lgkmcnt(0);", constraints=("=s"), args=[], dtype=tl.int64, is_pure=False, pack=1)
+    return tmp
+
+@triton.jit
 def all_reduce_kernel(
+    begin_timestamp_ptr,
+    middle_timestamp_ptr,
+    end_timestamp_ptr,
     local_C_partial_ptr,
     c,
     tile_completed_ptr,
@@ -113,6 +121,10 @@ def all_reduce_kernel(
 
     for tile in range(pid, total_tiles, NUM_SMS):
         result = 0
+
+        timestamp = read_realtime()
+        tl.store(begin_timestamp_ptr + tile, timestamp)
+
         while result == 0:
             compare = 1
             value = 0
@@ -126,6 +138,9 @@ def all_reduce_kernel(
                 sem="acquire",
                 scope="sys",
             )
+
+        timestamp = read_realtime()
+        tl.store(middle_timestamp_ptr + tile, timestamp)
 
         # Consume the tile in sub-tiles
         rm, rn, mask, rm_start, rn_start = offset_for_tile(
@@ -168,6 +183,9 @@ def all_reduce_kernel(
                     mask=sub_mask,
                     sem="relaxed"
                 )
+
+        timestamp = read_realtime()
+        tl.store(end_timestamp_ptr + tile, timestamp)
 
 @triton.jit
 def all_scatter_kernel(

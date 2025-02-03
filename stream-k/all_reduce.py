@@ -7,7 +7,6 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
 
-
 torch.manual_seed(123)
 random.seed(123)
 
@@ -91,6 +90,9 @@ locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
 tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
+comm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+comm_middle_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+comm_end_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
 
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
@@ -127,6 +129,9 @@ def run_experiment():
     torch.cuda.nvtx.range_push(f"Communication")
     with torch.cuda.stream(comm_stream):
         rr = all_reduce_kernel[grid](
+            comm_begin_timestamp,
+            comm_middle_timestamp,
+            comm_end_timestamp,
             local_C,
             global_C,
             tile_completed,
@@ -148,6 +153,8 @@ def run_experiment():
         )
 
         shmem.log_debug(f"{rr.n_regs} registers used, {rr.n_spills} spills")
+        # print(rr.asm['ttgir'])
+        # print(rr.asm['amdgcn'])
 
     torch.cuda.nvtx.range_pop()
     torch.cuda.synchronize()
