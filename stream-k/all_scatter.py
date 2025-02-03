@@ -89,6 +89,9 @@ locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
 tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
+comm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+comm_middle_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+comm_end_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
 
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
@@ -125,6 +128,9 @@ def run_experiment():
     torch.cuda.nvtx.range_push(f"Communication")
     with torch.cuda.stream(comm_stream):
         ss = all_scatter_kernel[grid](
+            comm_begin_timestamp,
+            comm_middle_timestamp,
+            comm_end_timestamp,
             local_C_partial,
             local_C,
             tile_completed,

@@ -189,6 +189,9 @@ def all_reduce_kernel(
 
 @triton.jit
 def all_scatter_kernel(
+    begin_timestamp_ptr,
+    middle_timestamp_ptr,
+    end_timestamp_ptr,
     local_C_partial_ptr,
     local_C_ptr,
     tile_completed_ptr,
@@ -211,6 +214,10 @@ def all_scatter_kernel(
     pid = tl.program_id(axis=0)
 
     for tile in range(pid, total_tiles, NUM_SMS):
+
+        timestamp = read_realtime()
+        tl.store(begin_timestamp_ptr + tile, timestamp)
+
         result = 0
         # Spin till tile is produced
         while result == 0:
@@ -226,6 +233,10 @@ def all_scatter_kernel(
                 sem="acquire",
                 scope="sys",
             )
+
+        timestamp = read_realtime()
+        tl.store(middle_timestamp_ptr + tile, timestamp)
+
         # Consume the tile
         rm, rn, load_mask = offset_for_tile(
             tile, BLOCK_SIZE_M_local, BLOCK_SIZE_N_local, GROUP_SIZE_M_global,
@@ -250,3 +261,6 @@ def all_scatter_kernel(
                     heap_bases,
                     mask=store_mask,
                 )
+
+        timestamp = read_realtime()
+        tl.store(end_timestamp_ptr + tile, timestamp)
