@@ -1,9 +1,24 @@
 import triton
 import triton.language as tl
 
+@triton.jit
+def read_realtime():
+    tmp = tl.inline_asm_elementwise(
+        asm="""s_waitcnt vmcnt(0)
+        s_memrealtime $0
+        s_waitcnt lgkmcnt(0)""",
+        constraints=("=s"),
+        args=[],
+        dtype=tl.int64,
+        is_pure=False,
+        pack=1
+    )
+    return tmp
 
 @triton.jit()
 def persistent_gemm(
+    mm_begin_timestamp_ptr,
+    mm_end_timestamp_ptr,
     A,
     B,
     C,
@@ -33,6 +48,7 @@ def persistent_gemm(
     EVEN_K: tl.constexpr,
 ):
     pid = tl.program_id(0)
+
     if NUM_XCDS != 1:
         pid = (pid % NUM_XCDS) * (NUM_SMS // NUM_XCDS) + (pid // NUM_XCDS)
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
@@ -49,6 +65,9 @@ def persistent_gemm(
     acc_dtype = tl.float32 if C.type.element_ty != tl.int8 else tl.int32
 
     for tile_id in range(pid, total_tiles, NUM_SMS):
+        timestamp = read_realtime()
+        tl.atomic_min(mm_begin_timestamp_ptr + tile_id, timestamp)
+
         num_pid_in_group = GROUP_SIZE_M * num_pid_n
         group_id = tile_id // num_pid_in_group
         first_pid_m = group_id * GROUP_SIZE_M
@@ -99,6 +118,9 @@ def persistent_gemm(
         c_mask = (rm[:, None] < M) & (rn[None, :] < N)
         C_ = C + rm[:, None] * stride_cm + rn[None, :] * stride_cn
         tl.store(C_, c, c_mask)
+
+        timestamp = read_realtime()
+        tl.atomic_max(mm_end_timestamp_ptr + tile_id, timestamp)
 
         # set the flag for the consumer kernel
         compare = 0

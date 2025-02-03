@@ -91,6 +91,11 @@ locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
 tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
+mm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+maxv = torch.iinfo(mm_begin_timestamp.dtype).max
+mm_begin_timestamp.fill_(maxv)
+mm_end_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
+
 comm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
 maxv = torch.iinfo(comm_begin_timestamp.dtype).max
 comm_begin_timestamp.fill_(maxv)
@@ -109,6 +114,8 @@ def run_experiment():
     torch.cuda.nvtx.range_push(f"GEMM")
     with torch.cuda.stream(gemm_stream):
         local_C = matmul.apply(
+            mm_begin_timestamp,
+            mm_end_timestamp,
             local_A,
             local_B,
             local_C,
@@ -184,6 +191,10 @@ if benchmark:
     shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
 
 if timestamps and rank == 0:
+    print("#################### GEMM BEGIN TIMESTAMP ####################")
+    print(mm_begin_timestamp.cpu().numpy())
+    print("#################### GEMM END TIMESTAMP ####################")
+    print(mm_end_timestamp.cpu().numpy())
     print("#################### POLLING BEGIN TIMESTAMP ####################")
     print(comm_begin_timestamp.cpu().numpy())
     print("#################### POLLING END TIMESTAMP ####################")
