@@ -1,19 +1,6 @@
 import triton
 import triton.language as tl
-
-@triton.jit
-def read_realtime():
-    tmp = tl.inline_asm_elementwise(
-        asm="""s_waitcnt vmcnt(0)
-        s_memrealtime $0
-        s_waitcnt lgkmcnt(0)""",
-        constraints=("=s"),
-        args=[],
-        dtype=tl.int64,
-        is_pure=False,
-        pack=1
-    )
-    return tmp
+from utils import read_realtime
 
 @triton.jit()
 def persistent_gemm(
@@ -46,6 +33,7 @@ def persistent_gemm(
     NUM_XCDS: tl.constexpr,
     BIAS: tl.constexpr,
     EVEN_K: tl.constexpr,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(0)
 
@@ -118,9 +106,10 @@ def persistent_gemm(
         c_mask = (rm[:, None] < M) & (rn[None, :] < N)
         C_ = C + rm[:, None] * stride_cm + rn[None, :] * stride_cn
         tl.store(C_, c, c_mask)
-
-        timestamp = read_realtime()
-        tl.atomic_max(mm_end_timestamp_ptr + tile_id, timestamp)
+        
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_max(mm_end_timestamp_ptr + tile_id, timestamp)
 
         # set the flag for the consumer kernel
         compare = 0

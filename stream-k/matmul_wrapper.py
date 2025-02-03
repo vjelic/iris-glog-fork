@@ -48,6 +48,7 @@ class matmul(torch.autograd.Function):
         waves_per_eu: int,
         mfmaInstrSize: int,
         kpack: int,
+        COLLECT_TIMESTAMPS: bool,
     ):
 
         #        assert a.is_contiguous() and b.is_contiguous(), "non-contiguous inputs are not supported"
@@ -133,6 +134,7 @@ class matmul(torch.autograd.Function):
             waves_per_eu=waves_per_eu,
             matrix_instr_nonkdim=mfmaInstrSize,
             kpack=kpack,
+            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
         )
 
         if matmul._debug:
@@ -168,6 +170,7 @@ class matmul(torch.autograd.Function):
         waves_per_eu=2,
         mfmaInstrSize=16,
         kpack=1,
+        COLLECT_TIMESTAMPS=False,
     ):
         matmul._call(
             mm_begin_timestamp=mm_begin_timestamp,
@@ -191,5 +194,6 @@ class matmul(torch.autograd.Function):
             waves_per_eu=waves_per_eu,
             mfmaInstrSize=mfmaInstrSize,
             kpack=kpack,
+            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
         )
         return c
