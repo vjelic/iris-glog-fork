@@ -25,6 +25,7 @@ from validation import validate_gemm
 # ---------------------------------------------------------------------------
 
 debug = False
+timestamps = True
 validate = True
 benchmark = True
 m, n, k = 4864, 4096, 8256
@@ -91,8 +92,13 @@ tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
 comm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
-comm_middle_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
-comm_end_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+maxv = torch.iinfo(comm_begin_timestamp.dtype).max
+comm_begin_timestamp.fill_(maxv)
+comm_middle_min_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+maxv = torch.iinfo(comm_middle_min_timestamp.dtype).max
+comm_middle_min_timestamp.fill_(maxv)
+comm_middle_max_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
+comm_end_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
 
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
@@ -130,7 +136,8 @@ def run_experiment():
     with torch.cuda.stream(comm_stream):
         rr = all_reduce_kernel[grid](
             comm_begin_timestamp,
-            comm_middle_timestamp,
+            comm_middle_min_timestamp,
+            comm_middle_max_timestamp,
             comm_end_timestamp,
             local_C,
             global_C,
@@ -153,8 +160,9 @@ def run_experiment():
         )
 
         shmem.log_debug(f"{rr.n_regs} registers used, {rr.n_spills} spills")
-        # print(rr.asm['ttgir'])
-        # print(rr.asm['amdgcn'])
+        if rank == 0:
+            print(rr.asm['ttgir'])
+            print(rr.asm['amdgcn'])
 
     torch.cuda.nvtx.range_pop()
     torch.cuda.synchronize()
@@ -175,5 +183,14 @@ if benchmark:
     triton_ms = triton.testing.do_bench(lambda: run_experiment())
     shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
 
+if timestamps and rank == 0:
+    print("#################### POLLING BEGIN TIMESTAMP ####################")
+    print(comm_begin_timestamp.cpu().numpy())
+    print("#################### POLLING END TIMESTAMP ####################")
+    print(comm_middle_min_timestamp.cpu().numpy())
+    print("#################### OPERATION BEGIN TIMESTAMP ####################")
+    print(comm_middle_max_timestamp.cpu().numpy())
+    print("#################### OPERATION END TIMESTAMP ####################")
+    print(comm_end_timestamp.cpu().numpy())
 
 exit(0)

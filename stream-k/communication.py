@@ -88,13 +88,23 @@ def extract_submask_and_offset(
 
 @triton.jit
 def read_realtime():
-    tmp = tl.inline_asm_elementwise(asm="s_waitcnt vmcnt(0); s_memrealtime $0; s_waitcnt lgkmcnt(0);", constraints=("=s"), args=[], dtype=tl.int64, is_pure=False, pack=1)
+    tmp = tl.inline_asm_elementwise(
+        asm="""s_waitcnt vmcnt(0)
+        s_memrealtime $0
+        s_waitcnt lgkmcnt(0)""",
+        constraints=("=s"),
+        args=[],
+        dtype=tl.int64,
+        is_pure=False,
+        pack=1
+    )
     return tmp
 
 @triton.jit
 def all_reduce_kernel(
     begin_timestamp_ptr,
-    middle_timestamp_ptr,
+    middle_min_timestamp_ptr,
+    middle_max_timestamp_ptr,
     end_timestamp_ptr,
     local_C_partial_ptr,
     c,
@@ -123,7 +133,7 @@ def all_reduce_kernel(
         result = 0
 
         timestamp = read_realtime()
-        tl.store(begin_timestamp_ptr + tile, timestamp)
+        tl.atomic_min(begin_timestamp_ptr + tile, timestamp)
 
         while result == 0:
             compare = 1
@@ -140,7 +150,8 @@ def all_reduce_kernel(
             )
 
         timestamp = read_realtime()
-        tl.store(middle_timestamp_ptr + tile, timestamp)
+        tl.atomic_max(middle_max_timestamp_ptr + tile, timestamp)
+        tl.atomic_min(middle_min_timestamp_ptr + tile, timestamp)
 
         # Consume the tile in sub-tiles
         rm, rn, mask, rm_start, rn_start = offset_for_tile(
@@ -185,12 +196,13 @@ def all_reduce_kernel(
                 )
 
         timestamp = read_realtime()
-        tl.store(end_timestamp_ptr + tile, timestamp)
+        tl.atomic_max(end_timestamp_ptr + tile, timestamp)
 
 @triton.jit
 def all_scatter_kernel(
     begin_timestamp_ptr,
-    middle_timestamp_ptr,
+    middle_min_timestamp_ptr,
+    middle_max_timestamp_ptr,
     end_timestamp_ptr,
     local_C_partial_ptr,
     local_C_ptr,
@@ -216,7 +228,7 @@ def all_scatter_kernel(
     for tile in range(pid, total_tiles, NUM_SMS):
 
         timestamp = read_realtime()
-        tl.store(begin_timestamp_ptr + tile, timestamp)
+        tl.atomic_min(begin_timestamp_ptr + tile, timestamp)
 
         result = 0
         # Spin till tile is produced
@@ -235,7 +247,8 @@ def all_scatter_kernel(
             )
 
         timestamp = read_realtime()
-        tl.store(middle_timestamp_ptr + tile, timestamp)
+        tl.atomic_max(middle_max_timestamp_ptr + tile, timestamp)
+        tl.atomic_min(middle_min_timestamp_ptr + tile, timestamp)
 
         # Consume the tile
         rm, rn, load_mask = offset_for_tile(
@@ -263,4 +276,4 @@ def all_scatter_kernel(
                 )
 
         timestamp = read_realtime()
-        tl.store(end_timestamp_ptr + tile, timestamp)
+        tl.atomic_max(end_timestamp_ptr + tile, timestamp)
