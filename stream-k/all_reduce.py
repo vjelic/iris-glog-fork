@@ -4,6 +4,7 @@ import random
 import sys
 import os
 import json
+import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
@@ -93,20 +94,28 @@ locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
 tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
+max_ts = torch.iinfo(torch.int64).max
+min_ts = 0
 mm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
-maxv = torch.iinfo(mm_begin_timestamp.dtype).max
-mm_begin_timestamp.fill_(maxv)
 mm_end_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
 
 comm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
-maxv = torch.iinfo(comm_begin_timestamp.dtype).max
-comm_begin_timestamp.fill_(maxv)
 comm_middle_min_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
-maxv = torch.iinfo(comm_middle_min_timestamp.dtype).max
-comm_middle_min_timestamp.fill_(maxv)
 comm_middle_max_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
 comm_end_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
 
+def reset_timers():
+    mm_begin_timestamp.fill_(max_ts)
+    mm_end_timestamp.fill_(min_ts)
+    
+    comm_begin_timestamp.fill_(max_ts)
+    comm_middle_min_timestamp.fill_(max_ts)
+    comm_middle_max_timestamp.fill_(min_ts)
+    comm_end_timestamp.fill_(min_ts)
+
+def reset_buffers():
+    global_C.fill_(0)
+    
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
 
@@ -183,6 +192,14 @@ def run_experiment():
 
 run_experiment()
 
+
+if COLLECT_TIMESTAMPS:
+    num_timer_experiments = 10
+    for experiment in range(num_timer_experiments):
+        reset_timers()
+        reset_buffers()
+        run_experiment()
+
 if validate:
     matmul.set_debug(False)
     validate_gemm(A, B, global_C, shmem)
@@ -204,6 +221,20 @@ if COLLECT_TIMESTAMPS and rank == 0:
     op_end_us = cycles_to_us(comm_end_timestamp.cpu().numpy())
 
 
+    min_timestamp = min(np.min(gemm_begin_us),
+                        np.min(gemm_end_us),
+                        np.min(comm_begin_us),
+                        np.min(poll_end_us),
+                        np.min(op_begin_us),
+                        np.min(op_end_us))
+    
+    gemm_begin_us = gemm_begin_us - min_timestamp
+    gemm_end_us = gemm_end_us - min_timestamp
+    comm_begin_us = comm_begin_us - min_timestamp
+    poll_end_us = poll_end_us - min_timestamp
+    op_begin_us = op_begin_us - min_timestamp
+    op_end_us = op_end_us - min_timestamp
+    
     data = [
         {"tild_id": i,
          "gemm_begin": int(gemm_begin),
