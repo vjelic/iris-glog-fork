@@ -1,6 +1,6 @@
 import triton
 import triton.language as tl
-
+from utils import read_realtime
 
 @triton.jit()
 def persistent_gemm(
@@ -31,8 +31,12 @@ def persistent_gemm(
     NUM_XCDS: tl.constexpr,
     BIAS: tl.constexpr,
     EVEN_K: tl.constexpr,
+    mm_begin_timestamp_ptr: tl.tensor = None,
+    mm_end_timestamp_ptr: tl.tensor = None,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(0)
+
     if NUM_XCDS != 1:
         pid = (pid % NUM_XCDS) * (NUM_SMS // NUM_XCDS) + (pid // NUM_XCDS)
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
@@ -49,6 +53,10 @@ def persistent_gemm(
     acc_dtype = tl.float32 if C.type.element_ty != tl.int8 else tl.int32
 
     for tile_id in range(pid, total_tiles, NUM_SMS):
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_min(mm_begin_timestamp_ptr + tile_id, timestamp)
+
         num_pid_in_group = GROUP_SIZE_M * num_pid_n
         group_id = tile_id // num_pid_in_group
         first_pid_m = group_id * GROUP_SIZE_M
@@ -99,7 +107,7 @@ def persistent_gemm(
         c_mask = (rm[:, None] < M) & (rn[None, :] < N)
         C_ = C + rm[:, None] * stride_cm + rn[None, :] * stride_cn
         tl.store(C_, c, c_mask)
-
+        
         # set the flag for the consumer kernel
         compare = 0
         value = 1
@@ -107,3 +115,7 @@ def persistent_gemm(
         tl.atomic_cas(
             tile_completed + tile_id, compare, value, sem="release", scope="sys"
         )
+
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_max(mm_end_timestamp_ptr + tile_id, timestamp)

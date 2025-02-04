@@ -6,7 +6,7 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
-
+from utils import read_realtime
 
 @triton.jit
 def tile_id_to_index_range(
@@ -86,6 +86,8 @@ def extract_submask_and_offset(
 
     return sub_mask, sub_offset
 
+
+
 @triton.jit
 def all_reduce_kernel(
     local_C_partial_ptr,
@@ -97,7 +99,7 @@ def all_reduce_kernel(
     stride_cm_local,
     stride_cn_local,
     stride_cm_global,
-    stride_cn_global,    
+    stride_cn_global,
     BLOCK_SIZE_M: tl.constexpr,
     BLOCK_SIZE_N: tl.constexpr,
     GROUP_SIZE_M: tl.constexpr,
@@ -106,13 +108,23 @@ def all_reduce_kernel(
     world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     NUM_SMS: tl.constexpr,
+    begin_timestamp_ptr: tl.tensor = None,
+    middle_min_timestamp_ptr: tl.tensor = None,
+    middle_max_timestamp_ptr: tl.tensor = None,
+    end_timestamp_ptr: tl.tensor = None,
     REDUCTION_TILE_M: tl.constexpr = 128,
     REDUCTION_TILE_N: tl.constexpr = 128,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(axis=0)
 
     for tile in range(pid, total_tiles, NUM_SMS):
         result = 0
+
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_min(begin_timestamp_ptr + tile, timestamp)
+
         while result == 0:
             compare = 1
             value = 0
@@ -127,6 +139,11 @@ def all_reduce_kernel(
                 scope="sys",
             )
 
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_max(middle_max_timestamp_ptr + tile, timestamp)
+            tl.atomic_min(middle_min_timestamp_ptr + tile, timestamp)
+
         # Consume the tile in sub-tiles
         rm, rn, mask, rm_start, rn_start = offset_for_tile(
             tile, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M,
@@ -138,7 +155,7 @@ def all_reduce_kernel(
         num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, REDUCTION_TILE_N)
         total_sub_tiles = num_sub_tiles_m * num_sub_tiles_n
 
-        # Flattened loop over all sub-tiles, triton is 
+        # Flattened loop over all sub-tiles, triton is
         # better at handling flat loops instead of nested loops
         for sub_tile_idx in range(0, total_sub_tiles):
             # Calculate start_row and start_col for the current sub-tile
@@ -166,8 +183,12 @@ def all_reduce_kernel(
                     remote_rank,
                     heap_bases,
                     mask=sub_mask,
-                    sem="relaxed"
+                    scope="sys",
                 )
+
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_max(end_timestamp_ptr + tile, timestamp)
 
 @triton.jit
 def all_scatter_kernel(
@@ -189,10 +210,19 @@ def all_scatter_kernel(
     world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     NUM_SMS: tl.constexpr,
+    begin_timestamp_ptr: tl.tensor = None,
+    middle_min_timestamp_ptr: tl.tensor = None,
+    middle_max_timestamp_ptr: tl.tensor = None,
+    end_timestamp_ptr: tl.tensor = None,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(axis=0)
 
     for tile in range(pid, total_tiles, NUM_SMS):
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_min(begin_timestamp_ptr + tile, timestamp)
+
         result = 0
         # Spin till tile is produced
         while result == 0:
@@ -208,6 +238,12 @@ def all_scatter_kernel(
                 sem="acquire",
                 scope="sys",
             )
+
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_max(middle_max_timestamp_ptr + tile, timestamp)
+            tl.atomic_min(middle_min_timestamp_ptr + tile, timestamp)
+
         # Consume the tile
         rm, rn, load_mask = offset_for_tile(
             tile, BLOCK_SIZE_M_local, BLOCK_SIZE_N_local, GROUP_SIZE_M_global,
@@ -232,3 +268,7 @@ def all_scatter_kernel(
                     heap_bases,
                     mask=store_mask,
                 )
+
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_max(end_timestamp_ptr + tile, timestamp)

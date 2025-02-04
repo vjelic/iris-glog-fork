@@ -13,6 +13,7 @@ from pyrocSHMEM._hip import (
     malloc_fine_grained,
     get_ipc_handle,
     open_ipc_handle,
+    get_wall_clock_rate,
 )
 import numpy as np
 import math
@@ -212,6 +213,9 @@ class pyrocSHMEM:
 
     def get_num_ranks(self):
         return self.num_ranks
+    
+    def wall_clock_rate(self, rank):
+        return get_wall_clock_rate(rank)
 
 
 @triton.jit
