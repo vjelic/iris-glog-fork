@@ -33,7 +33,7 @@ benchmark = False
 
 COLLECT_TIMESTAMPS = True
 
-m, n, k = 4864, 4096, 16384
+m, n, k = 4864, 4096, 8256
 # m, n, k = 512, 512, 256 # one tile
 
 heap_size = 1 << 30
@@ -58,7 +58,6 @@ assert k % world_size == 0, "N must be divisible by world size."
 local_B = B[start_row:end_row, :]
 local_A = A[:, start_row:end_row]
 local_C = shmem.zeros((m, n), device="cuda", dtype=A.dtype)
-global_C = shmem.zeros((m, n), device="cuda", dtype=A.dtype)
 
 bias = None
 BLK_M = 256
@@ -115,7 +114,7 @@ def reset_timers():
     comm_end_timestamp.fill_(min_ts)
 
 def reset_buffers():
-    global_C.fill_(0)
+    C.fill_(0)
     
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
@@ -156,7 +155,7 @@ def run_experiment():
     with torch.cuda.stream(comm_stream):
         rr = all_reduce_kernel[grid](
             local_C,
-            global_C,
+            C,
             tile_completed,
             shmem.get_heap_bases(),
             m,
@@ -203,7 +202,7 @@ if COLLECT_TIMESTAMPS:
 
 if validate:
     matmul.set_debug(False)
-    validate_gemm(A, B, global_C, shmem)
+    validate_gemm(A, B, C, shmem)
     shmem.barrier()
     shmem.log("Validation passed.")
 
