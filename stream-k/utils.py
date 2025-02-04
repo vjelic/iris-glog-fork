@@ -53,14 +53,14 @@ def dump_timers(mm_begin_timestamp,
     op_end_us = op_end_us - min_timestamp
     
     data = [
-        {"tild_id": i,
+        {"tile_id": i,
          "gemm_begin": int(gemm_begin),
          "gemm_end":   int(gemm_end),
          "poll_begin": int(comm_begin),
          "poll_end":   int(poll_end),
          "op_begin":   int(op_begin),
-         "op_end":   int(op_end,),
-        "comm_begin":   int(comm_begin),
+         "op_end":     int(op_end,),
+         "comm_begin": int(comm_begin),
          "comm_end":   int(op_end,)}
         for i, (gemm_begin, gemm_end, comm_begin,
                 poll_end, op_begin, op_end) in enumerate(zip(gemm_begin_us,
