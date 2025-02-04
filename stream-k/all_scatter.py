@@ -3,6 +3,7 @@ import triton
 import random
 import sys
 import os
+from utils import dump_timers
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
@@ -28,6 +29,9 @@ from validation import validate_gemm
 debug = False
 validate = True
 benchmark = True
+
+COLLECT_TIMESTAMPS = True
+
 m, n, k = 4864, 4096, 8256
 
 heap_size = 1 << 30
@@ -69,7 +73,7 @@ waves_per_eu = 0
 mfmaInstrSize = 16
 kpack = 2
 
-streamk_sms = 256
+streamk_sms = 16
 communication_sms = total_sm - streamk_sms
 communication_block_size = 128
 communication_num_threads = communication_block_size * communication_sms
@@ -89,9 +93,24 @@ locks = shmem.zeros((streamk_sms,), device="cuda", dtype=torch.int32)
 tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 P = shmem.zeros((streamk_sms, BLK_M * BLK_N), device="cuda", dtype=torch.float32)
 
+max_ts = torch.iinfo(torch.int64).max
+min_ts = 0
+mm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+mm_end_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
+
 comm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
-comm_middle_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
-comm_end_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+comm_middle_min_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
+comm_middle_max_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
+comm_end_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
+
+def reset_timers():
+    mm_begin_timestamp.fill_(max_ts)
+    mm_end_timestamp.fill_(min_ts)
+    
+    comm_begin_timestamp.fill_(max_ts)
+    comm_middle_min_timestamp.fill_(max_ts)
+    comm_middle_max_timestamp.fill_(min_ts)
+    comm_end_timestamp.fill_(min_ts)
 
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
@@ -121,6 +140,9 @@ def run_experiment():
             waves_per_eu,
             mfmaInstrSize,
             kpack,
+            mm_begin_timestamp,
+            mm_end_timestamp,
+            COLLECT_TIMESTAMPS
         )
 
     # All scatter kernel
@@ -128,9 +150,6 @@ def run_experiment():
     torch.cuda.nvtx.range_push(f"Communication")
     with torch.cuda.stream(comm_stream):
         ss = all_scatter_kernel[grid](
-            comm_begin_timestamp,
-            comm_middle_timestamp,
-            comm_end_timestamp,
             local_C_partial,
             local_C,
             tile_completed,
@@ -148,6 +167,11 @@ def run_experiment():
             rank,
             world_size,
             BLOCK_SIZE=communication_block_size,
+            begin_timestamp_ptr=comm_begin_timestamp,
+            middle_min_timestamp_ptr=comm_middle_min_timestamp,
+            middle_max_timestamp_ptr=comm_middle_max_timestamp,
+            end_timestamp_ptr=comm_end_timestamp,
+            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
             NUM_SMS=communication_sms,
         )
 
@@ -162,6 +186,24 @@ def run_experiment():
 
 run_experiment()
 
+if COLLECT_TIMESTAMPS:
+    num_timer_experiments = 10
+    for experiment in range(num_timer_experiments):
+        reset_timers()
+        run_experiment()
+
+if COLLECT_TIMESTAMPS and rank == 0:
+    gpu_freq = shmem.wall_clock_rate(rank) * 1e-3 
+    filename = f"gemm_tiles_all_scatter_trace_rank{rank}.json"
+    dump_timers(mm_begin_timestamp,
+                    mm_end_timestamp,
+                    comm_begin_timestamp,
+                    comm_middle_max_timestamp,
+                    comm_middle_min_timestamp,
+                    comm_end_timestamp,
+                    gpu_freq,
+                    filename)
+            
 if validate:
     matmul.set_debug(False)
     validate_gemm(A, B, local_C, shmem)

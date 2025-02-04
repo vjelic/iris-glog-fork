@@ -5,6 +5,7 @@ import sys
 import os
 import json
 import numpy as np
+from utils import dump_timers
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
@@ -125,8 +126,6 @@ def run_experiment():
     torch.cuda.nvtx.range_push(f"GEMM")
     with torch.cuda.stream(gemm_stream):
         local_C = matmul.apply(
-            mm_begin_timestamp,
-            mm_end_timestamp,
             local_A,
             local_B,
             local_C,
@@ -146,6 +145,8 @@ def run_experiment():
             waves_per_eu,
             mfmaInstrSize,
             kpack,
+            mm_begin_timestamp,
+            mm_end_timestamp,
             COLLECT_TIMESTAMPS
         )
 
@@ -154,10 +155,6 @@ def run_experiment():
     torch.cuda.nvtx.range_push(f"Communication")
     with torch.cuda.stream(comm_stream):
         rr = all_reduce_kernel[grid](
-            comm_begin_timestamp,
-            comm_middle_min_timestamp,
-            comm_middle_max_timestamp,
-            comm_end_timestamp,
             local_C,
             global_C,
             tile_completed,
@@ -176,6 +173,10 @@ def run_experiment():
             world_size,
             BLOCK_SIZE=communication_block_size,
             NUM_SMS=communication_sms,
+            begin_timestamp_ptr=comm_begin_timestamp,
+            middle_min_timestamp_ptr=comm_middle_min_timestamp,
+            middle_max_timestamp_ptr=comm_middle_max_timestamp,
+            end_timestamp_ptr=comm_end_timestamp,
             COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS
         )
 
@@ -207,59 +208,19 @@ if validate:
     shmem.log("Validation passed.")
 
 if COLLECT_TIMESTAMPS and rank == 0:
-    
     gpu_freq = shmem.wall_clock_rate(rank) * 1e-3 
-    
-    cycles_to_us = lambda cycles: (cycles / gpu_freq)
-    
-    gemm_begin_us = cycles_to_us(mm_begin_timestamp.cpu().numpy())
-    gemm_end_us = cycles_to_us(mm_end_timestamp.cpu().numpy())
-    
-    comm_begin_us = cycles_to_us(comm_begin_timestamp.cpu().numpy())
-    poll_end_us = cycles_to_us(comm_middle_max_timestamp.cpu().numpy())
-    op_begin_us = cycles_to_us(comm_middle_min_timestamp.cpu().numpy())
-    op_end_us = cycles_to_us(comm_end_timestamp.cpu().numpy())
-
-
-    min_timestamp = min(np.min(gemm_begin_us),
-                        np.min(gemm_end_us),
-                        np.min(comm_begin_us),
-                        np.min(poll_end_us),
-                        np.min(op_begin_us),
-                        np.min(op_end_us))
-    
-    gemm_begin_us = gemm_begin_us - min_timestamp
-    gemm_end_us = gemm_end_us - min_timestamp
-    comm_begin_us = comm_begin_us - min_timestamp
-    poll_end_us = poll_end_us - min_timestamp
-    op_begin_us = op_begin_us - min_timestamp
-    op_end_us = op_end_us - min_timestamp
-    
-    data = [
-        {"tild_id": i,
-         "gemm_begin": int(gemm_begin),
-         "gemm_end":   int(gemm_end),
-         "poll_begin": int(comm_begin),
-         "poll_end":   int(poll_end),
-         "op_begin":   int(op_begin),
-         "op_end":   int(op_end,),
-        "comm_begin":   int(comm_begin),
-         "comm_end":   int(op_end,)}
-        for i, (gemm_begin, gemm_end, comm_begin,
-                poll_end, op_begin, op_end) in enumerate(zip(gemm_begin_us,
-                                       gemm_end_us,
-                                       comm_begin_us,
-                                       poll_end_us,
-                                       op_begin_us,
-                                       op_end_us))
-    ]
-    filename = f"gemm_tiles_trace_rank{rank}.json"
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4)
-
-    if benchmark:
-        perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
-        triton_ms = triton.testing.do_bench(lambda: run_experiment())
-        shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
+    filename = f"gemm_tiles_all_reduce_trace_rank{rank}.json"
+    dump_timers(mm_begin_timestamp,
+                    mm_end_timestamp,
+                    comm_begin_timestamp,
+                    comm_middle_max_timestamp,
+                    comm_middle_min_timestamp,
+                    comm_end_timestamp,
+                    gpu_freq,
+                    filename)
+if benchmark:
+    perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
+    triton_ms = triton.testing.do_bench(lambda: run_experiment())
+    shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
 
 exit(0)

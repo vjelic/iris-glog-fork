@@ -90,10 +90,6 @@ def extract_submask_and_offset(
 
 @triton.jit
 def all_reduce_kernel(
-    begin_timestamp_ptr,
-    middle_min_timestamp_ptr,
-    middle_max_timestamp_ptr,
-    end_timestamp_ptr,
     local_C_partial_ptr,
     c,
     tile_completed_ptr,
@@ -112,6 +108,10 @@ def all_reduce_kernel(
     world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     NUM_SMS: tl.constexpr,
+    begin_timestamp_ptr: tl.tensor = None,
+    middle_min_timestamp_ptr: tl.tensor = None,
+    middle_max_timestamp_ptr: tl.tensor = None,
+    end_timestamp_ptr: tl.tensor = None,
     REDUCTION_TILE_M: tl.constexpr = 128,
     REDUCTION_TILE_N: tl.constexpr = 128,
     COLLECT_TIMESTAMPS: tl.constexpr = False,
@@ -192,10 +192,6 @@ def all_reduce_kernel(
 
 @triton.jit
 def all_scatter_kernel(
-    begin_timestamp_ptr,
-    middle_min_timestamp_ptr,
-    middle_max_timestamp_ptr,
-    end_timestamp_ptr,
     local_C_partial_ptr,
     local_C_ptr,
     tile_completed_ptr,
@@ -214,6 +210,10 @@ def all_scatter_kernel(
     world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     NUM_SMS: tl.constexpr,
+    begin_timestamp_ptr: tl.tensor = None,
+    middle_min_timestamp_ptr: tl.tensor = None,
+    middle_max_timestamp_ptr: tl.tensor = None,
+    end_timestamp_ptr: tl.tensor = None,
     COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(axis=0)

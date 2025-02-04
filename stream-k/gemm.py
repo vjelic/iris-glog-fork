@@ -4,8 +4,6 @@ from utils import read_realtime
 
 @triton.jit()
 def persistent_gemm(
-    mm_begin_timestamp_ptr,
-    mm_end_timestamp_ptr,
     A,
     B,
     C,
@@ -33,6 +31,8 @@ def persistent_gemm(
     NUM_XCDS: tl.constexpr,
     BIAS: tl.constexpr,
     EVEN_K: tl.constexpr,
+    mm_begin_timestamp_ptr: tl.tensor = None,
+    mm_end_timestamp_ptr: tl.tensor = None,
     COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(0)
