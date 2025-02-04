@@ -27,12 +27,12 @@ from validation import validate_gemm
 
 debug = False
 validate = True
-benchmark = True
+benchmark = False
 
 COLLECT_TIMESTAMPS = True
 
-m, n, k = 4864, 4096, 8256
-# m, n, k = 256, 256, 256 # one tile
+m, n, k = 4864, 4096, 16384
+# m, n, k = 512, 512, 256 # one tile
 
 heap_size = 1 << 30
 shmem = pyshmem.pyrocSHMEM(heap_size)
@@ -101,7 +101,7 @@ mm_end_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
 comm_begin_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
 maxv = torch.iinfo(comm_begin_timestamp.dtype).max
 comm_begin_timestamp.fill_(maxv)
-comm_middle_min_timestamp = torch.empty(total_tiles, dtype=torch.int64, device='cuda')
+comm_middle_min_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
 maxv = torch.iinfo(comm_middle_min_timestamp.dtype).max
 comm_middle_min_timestamp.fill_(maxv)
 comm_middle_max_timestamp = torch.zeros(total_tiles, dtype=torch.int64, device='cuda')
@@ -172,8 +172,8 @@ def run_experiment():
 
         shmem.log_debug(f"{rr.n_regs} registers used, {rr.n_spills} spills")
         # if rank == 0:
-        #     print(rr.asm['ttgir'])
-        #     print(rr.asm['amdgcn'])
+            # print(rr.asm['amdgcn'])
+            # print(rr.asm['ttgir'])
 
     torch.cuda.nvtx.range_pop()
     torch.cuda.synchronize()
@@ -189,44 +189,19 @@ if validate:
     shmem.barrier()
     shmem.log("Validation passed.")
 
-if benchmark:
-    perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
-    triton_ms = triton.testing.do_bench(lambda: run_experiment())
-    shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
-
 if COLLECT_TIMESTAMPS and rank == 0:
-    # print("#################### GEMM BEGIN TIMESTAMP ####################")
-    # print(mm_begin_timestamp.cpu().numpy())
-    # print("#################### GEMM END TIMESTAMP ####################")
-    # print(mm_end_timestamp.cpu().numpy())
-    # print("#################### POLLING BEGIN TIMESTAMP ####################")
-    # print(comm_begin_timestamp.cpu().numpy())
-    # print("#################### POLLING END TIMESTAMP ####################")
-    # print(comm_middle_min_timestamp.cpu().numpy())
-    # print("#################### OPERATION BEGIN TIMESTAMP ####################")
-    # print(comm_middle_max_timestamp.cpu().numpy())
-    # print("#################### OPERATION END TIMESTAMP ####################")
-    # print(comm_end_timestamp.cpu().numpy())
-
-        
-    prop =  torch.cuda.get_device_properties(rank)
-    if "MI250" in prop.name:
-        gpu_freq = 2.5E7
-    elif "MI300" in prop.name:
-        gpu_freq = 1.0E8
-    else:
-        print("Unsupported GPU")
-        os.exit(1)
     
-    cycles_to_ms = lambda cycles: (cycles  * 1e3 / gpu_freq)
+    gpu_freq = shmem.wall_clock_rate(rank) * 1e-3 
     
-    gemm_begin_ms = cycles_to_ms(mm_begin_timestamp.cpu().numpy())
-    gemm_end_ms = cycles_to_ms(mm_end_timestamp.cpu().numpy())
+    cycles_to_us = lambda cycles: (cycles / gpu_freq)
     
-    comm_begin_ms = cycles_to_ms(comm_begin_timestamp.cpu().numpy())
-    poll_end_ms = cycles_to_ms(comm_middle_min_timestamp.cpu().numpy())
-    op_begin_ms = cycles_to_ms(comm_middle_max_timestamp.cpu().numpy())
-    op_end_ms = cycles_to_ms(comm_end_timestamp.cpu().numpy())
+    gemm_begin_us = cycles_to_us(mm_begin_timestamp.cpu().numpy())
+    gemm_end_us = cycles_to_us(mm_end_timestamp.cpu().numpy())
+    
+    comm_begin_us = cycles_to_us(comm_begin_timestamp.cpu().numpy())
+    poll_end_us = cycles_to_us(comm_middle_max_timestamp.cpu().numpy())
+    op_begin_us = cycles_to_us(comm_middle_min_timestamp.cpu().numpy())
+    op_end_us = cycles_to_us(comm_end_timestamp.cpu().numpy())
 
 
     data = [
@@ -240,17 +215,20 @@ if COLLECT_TIMESTAMPS and rank == 0:
         "comm_begin":   int(comm_begin),
          "comm_end":   int(op_end,)}
         for i, (gemm_begin, gemm_end, comm_begin,
-                poll_end, op_begin, op_end) in enumerate(zip(gemm_begin_ms,
-                                       gemm_end_ms,
-                                       comm_begin_ms,
-                                       poll_end_ms,
-                                       op_begin_ms,
-                                       op_end_ms))
+                poll_end, op_begin, op_end) in enumerate(zip(gemm_begin_us,
+                                       gemm_end_us,
+                                       comm_begin_us,
+                                       poll_end_us,
+                                       op_begin_us,
+                                       op_end_us))
     ]
     filename = f"gemm_tiles_trace_rank{rank}.json"
     with open(filename, "w") as f:
         json.dump(data, f, indent=4)
 
-    
-    print(prop)
+    if benchmark:
+        perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
+        triton_ms = triton.testing.do_bench(lambda: run_experiment())
+        shmem.log_stats(f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {perf(triton_ms):.3f} tflops")
+
 exit(0)

@@ -74,6 +74,12 @@ def get_device():
     hip_try(hip_runtime.hipGetDevice(ctypes.byref(device_id)))
     return device_id.value
 
+def get_wall_clock_rate(device_id):
+    hipDeviceAttributeWallClockRate = 10017 # lol
+    wall_clock_rate = ctypes.c_int()
+    status = hip_runtime.hipDeviceGetAttribute(ctypes.byref(wall_clock_rate), hipDeviceAttributeWallClockRate, device_id)
+    hip_try(status)
+    return wall_clock_rate.value
 
 def malloc_fine_grained(size):
     hipDeviceMallocFinegrained = 0x1

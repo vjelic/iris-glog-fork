@@ -141,7 +141,6 @@ def all_reduce_kernel(
 
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
-
             tl.atomic_max(middle_max_timestamp_ptr + tile, timestamp)
             tl.atomic_min(middle_min_timestamp_ptr + tile, timestamp)
 
@@ -184,7 +183,7 @@ def all_reduce_kernel(
                     remote_rank,
                     heap_bases,
                     mask=sub_mask,
-                    sem="relaxed"
+                    scope="sys",
                 )
 
         if COLLECT_TIMESTAMPS:
