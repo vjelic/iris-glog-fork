@@ -73,7 +73,7 @@ waves_per_eu = 0
 mfmaInstrSize = 16
 kpack = 2
 
-streamk_sms = 16
+streamk_sms = 256
 communication_sms = total_sm - streamk_sms
 communication_block_size = 128
 communication_num_threads = communication_block_size * communication_sms
