@@ -193,7 +193,7 @@ def all_reduce_kernel(
 @triton.jit
 def all_scatter_kernel(
     local_C_partial_ptr,
-    local_C_ptr,
+    c,
     tile_completed_ptr,
     heap_bases,
     M_local,
@@ -202,8 +202,8 @@ def all_scatter_kernel(
     stride_cn_local,
     stride_cm_global,
     stride_cn_global,
-    BLOCK_SIZE_M_local: tl.constexpr,
-    BLOCK_SIZE_N_local: tl.constexpr,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
     GROUP_SIZE_M_global: tl.constexpr,
     total_tiles: tl.constexpr,
     cur_rank: tl.constexpr,
@@ -214,6 +214,8 @@ def all_scatter_kernel(
     middle_min_timestamp_ptr: tl.tensor = None,
     middle_max_timestamp_ptr: tl.tensor = None,
     end_timestamp_ptr: tl.tensor = None,
+    COMMUNICATION_TILE_M: tl.constexpr = 128,
+    COMMUNICATION_TILE_N: tl.constexpr = 128,
     COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(axis=0)
@@ -245,28 +247,55 @@ def all_scatter_kernel(
             tl.atomic_min(middle_min_timestamp_ptr + tile, timestamp)
 
         # Consume the tile
-        rm, rn, load_mask = offset_for_tile(
-            tile, BLOCK_SIZE_M_local, BLOCK_SIZE_N_local, GROUP_SIZE_M_global,
+        rm, rn, mask, rm_start, rn_start = offset_for_tile(
+            tile, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M_global,
             M_local, N_local
         )
-        offset_local = rm[:, None] * stride_cm_local + rn[None, :] * stride_cn_local
-        data = tl.load(local_C_partial_ptr + offset_local, mask=load_mask)
+        
+        
+        # Calculate the number of sub-tiles in each dimension
+        num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, COMMUNICATION_TILE_M)
+        num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, COMMUNICATION_TILE_N)
+        total_sub_tiles = num_sub_tiles_m * num_sub_tiles_n
 
-        rm_global = rm
-        rn_global = rn + cur_rank * N_local
-        store_mask = load_mask
-        offset_global = rm_global[:, None] * stride_cm_global + rn_global[None, :] * stride_cn_global
+        # Flattened loop over all sub-tiles, triton is
+        # better at handling flat loops instead of nested loops
+        for sub_tile_idx in range(0, total_sub_tiles):
+            # Calculate start_row and start_col for the current sub-tile
+            start_row = (sub_tile_idx // num_sub_tiles_n) * COMMUNICATION_TILE_M
+            start_col = (sub_tile_idx % num_sub_tiles_n) * COMMUNICATION_TILE_N
 
-        # Store
-        for remote_rank in range(world_size):
-            if True:
-                 pyshmem.put(
-                    local_C_ptr + offset_global,
+            # Extract the sub-mask and sub-offset for the current sub-block
+            sub_mask, sub_offset = extract_submask_and_offset(
+                rm, rn, mask, rm_start, rn_start,
+                start_row, start_col,
+                COMMUNICATION_TILE_M, COMMUNICATION_TILE_N,
+                BLOCK_SIZE_M, BLOCK_SIZE_N,
+                stride_cm_local, stride_cn_local
+            )
+            
+            # Load data from the local partial result
+            data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask)
+            
+            # Translate to global
+            sub_mask, global_offset = extract_submask_and_offset(
+                rm, rn + cur_rank * N_local, mask, rm_start,
+                rn_start + cur_rank * N_local,
+                start_row, start_col,
+                COMMUNICATION_TILE_M, COMMUNICATION_TILE_N,
+                BLOCK_SIZE_M, BLOCK_SIZE_N,
+                stride_cm_global, stride_cn_global
+            )
+            
+            # Store data to the global result using relaxed atomics
+            for remote_rank in range(world_size):
+                pyshmem.put(
+                    c + global_offset,
                     data,
                     cur_rank,
                     remote_rank,
                     heap_bases,
-                    mask=store_mask,
+                    mask=sub_mask
                 )
 
         if COLLECT_TIMESTAMPS:
