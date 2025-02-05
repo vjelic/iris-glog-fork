@@ -47,11 +47,11 @@ class matmul(torch.autograd.Function):
         waves_per_eu: int,
         mfmaInstrSize: int,
         kpack: int,
-        mm_begin_timestamp: torch.Tensor = None,
-        mm_end_timestamp: torch.Tensor = None,
-        COLLECT_TIMESTAMPS: bool = False,
         heap_bases_ptr: torch.Tensor = None,
         NOTIFY_REMOTES: bool = False,
+        COLLECT_TIMESTAMPS: bool = False,
+        mm_begin_timestamp: torch.Tensor = None,
+        mm_end_timestamp: torch.Tensor = None,
     ):
 
         #        assert a.is_contiguous() and b.is_contiguous(), "non-contiguous inputs are not supported"
@@ -110,8 +110,6 @@ class matmul(torch.autograd.Function):
             P,
             locks,
             tile_completed,
-            rank,
-            world_size,
             M,
             N,
             K,
@@ -136,9 +134,11 @@ class matmul(torch.autograd.Function):
             waves_per_eu=waves_per_eu,
             matrix_instr_nonkdim=mfmaInstrSize,
             kpack=kpack,
+            heap_bases_ptr=heap_bases_ptr,
+            rank=rank,
+            world_size=world_size,
             NOTIFY_REMOTES=NOTIFY_REMOTES,
             COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
-            heap_bases_ptr=heap_bases_ptr,
             mm_begin_timestamp_ptr=mm_begin_timestamp,
             mm_end_timestamp_ptr=mm_end_timestamp,
         )
@@ -175,11 +175,11 @@ class matmul(torch.autograd.Function):
         waves_per_eu=2,
         mfmaInstrSize=16,
         kpack=1,
-        mm_begin_timestamp: torch.Tensor = None,
-        mm_end_timestamp: torch.Tensor = None,
-        COLLECT_TIMESTAMPS: bool = False,
         heap_bases_ptr: torch.Tensor = None,
         NOTIFY_REMOTES: bool = False,
+        COLLECT_TIMESTAMPS: bool = False,
+        mm_begin_timestamp: torch.Tensor = None,
+        mm_end_timestamp: torch.Tensor = None,
     ):
         matmul._call(
             a=a,
@@ -202,10 +202,10 @@ class matmul(torch.autograd.Function):
             waves_per_eu=waves_per_eu,
             mfmaInstrSize=mfmaInstrSize,
             kpack=kpack,
+            heap_bases_ptr=heap_bases_ptr,
+            NOTIFY_REMOTES=NOTIFY_REMOTES,
+            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
             mm_begin_timestamp=mm_begin_timestamp,
             mm_end_timestamp=mm_end_timestamp,
-            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
-            NOTIFY_REMOTES=NOTIFY_REMOTES,
-            heap_bases_ptr=heap_bases_ptr
         )
         return c

@@ -16,8 +16,6 @@ def persistent_gemm(
     P,
     locks,
     tile_completed,
-    rank: tl.constexpr,
-    world_size: tl.constexpr,
     M,
     N,
     K,
@@ -37,11 +35,13 @@ def persistent_gemm(
     NUM_XCDS: tl.constexpr,
     BIAS: tl.constexpr,
     EVEN_K: tl.constexpr,
-    heap_bases_ptr: tl.tensor = None,
+    heap_bases_ptr: tl.tensor,
+    rank: tl.constexpr,
+    world_size: tl.constexpr,
+    NOTIFY_REMOTES: tl.constexpr = False,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
     mm_begin_timestamp_ptr: tl.tensor = None,
     mm_end_timestamp_ptr: tl.tensor = None,
-    COLLECT_TIMESTAMPS: tl.constexpr = False,
-    NOTIFY_REMOTES: tl.constexpr = False,
 ):
     pid = tl.program_id(0)
 

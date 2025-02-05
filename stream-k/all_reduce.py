@@ -36,6 +36,9 @@ COLLECT_TIMESTAMPS = True
 m, n, k = 4864, 4096, 8256
 # m, n, k = 512, 512, 256 # one tile
 
+REDUCTION_TILE_M=128
+REDUCTION_TILE_N=128
+
 heap_size = 1 << 30
 shmem = pyshmem.pyrocSHMEM(heap_size)
 rank = shmem.get_rank()
@@ -146,9 +149,11 @@ def run_experiment():
             waves_per_eu,
             mfmaInstrSize,
             kpack,
+            None,
+            False,
+            COLLECT_TIMESTAMPS,
             mm_begin_timestamp,
             mm_end_timestamp,
-            COLLECT_TIMESTAMPS
         )
 
     # Reduction kernel
@@ -159,7 +164,6 @@ def run_experiment():
             local_C,
             C,
             tile_completed,
-            shmem.get_heap_bases(),
             m,
             n,
             local_C.stride(0),
@@ -170,15 +174,18 @@ def run_experiment():
             BLK_N,
             gsize_m,
             total_tiles,
-            rank,
-            world_size,
             BLOCK_SIZE=communication_block_size,
             NUM_SMS=communication_sms,
+            heap_bases=shmem.get_heap_bases(),
+            cur_rank=rank,
+            world_size=world_size,
+            REDUCTION_TILE_M=REDUCTION_TILE_M,
+            REDUCTION_TILE_N=REDUCTION_TILE_N,
+            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
             begin_timestamp_ptr=comm_begin_timestamp,
             middle_min_timestamp_ptr=comm_middle_min_timestamp,
             middle_max_timestamp_ptr=comm_middle_max_timestamp,
             end_timestamp_ptr=comm_end_timestamp,
-            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS
         )
 
         shmem.log_debug(f"{rr.n_regs} registers used, {rr.n_spills} spills")
@@ -204,9 +211,10 @@ if COLLECT_TIMESTAMPS:
 
 if validate:
     matmul.set_debug(False)
-    validate_gemm(A, B, C, shmem)
+    success = validate_gemm(A, B, C, shmem)
     shmem.barrier()
-    shmem.log("Validation passed.")
+    shmem.log("Validation passed.") if success else shmem.log("Validation failed.")
+         
 
 if COLLECT_TIMESTAMPS and rank == 0:
     gpu_freq = shmem.wall_clock_rate(rank) * 1e-3 

@@ -33,6 +33,8 @@ benchmark = True
 COLLECT_TIMESTAMPS = True
 
 m, n, k = 4864, 4096, 8256
+SCATTER_TILE_M=128
+SCATTER_TILE_N=128
 
 heap_size = 1 << 30
 shmem = pyshmem.pyrocSHMEM(heap_size)
@@ -141,9 +143,11 @@ def run_experiment():
             waves_per_eu,
             mfmaInstrSize,
             kpack,
+            None,
+            False,
+            COLLECT_TIMESTAMPS,
             mm_begin_timestamp,
             mm_end_timestamp,
-            COLLECT_TIMESTAMPS
         )
 
     # All scatter kernel
@@ -154,7 +158,6 @@ def run_experiment():
             local_C_partial,
             local_C,
             tile_completed,
-            shmem.get_heap_bases(),
             m,
             n,
             local_C_partial.stride(0),
@@ -165,15 +168,18 @@ def run_experiment():
             BLK_N,
             gsize_m,
             total_tiles,
-            rank,
-            world_size,
             BLOCK_SIZE=communication_block_size,
+            NUM_SMS=communication_sms,
+            heap_bases=shmem.get_heap_bases(),
+            cur_rank=rank,
+            world_size=world_size,
+            SCATTER_TILE_M=SCATTER_TILE_M,
+            SCATTER_TILE_N=SCATTER_TILE_N,
+            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,            
             begin_timestamp_ptr=comm_begin_timestamp,
             middle_min_timestamp_ptr=comm_middle_min_timestamp,
             middle_max_timestamp_ptr=comm_middle_max_timestamp,
             end_timestamp_ptr=comm_end_timestamp,
-            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
-            NUM_SMS=communication_sms,
         )
 
         shmem.log_debug(f"{ss.n_regs} registers used, {ss.n_spills} spills")
@@ -207,9 +213,9 @@ if COLLECT_TIMESTAMPS and rank == 0:
             
 if validate:
     matmul.set_debug(False)
-    validate_gemm(A, B, local_C, shmem)
+    success = validate_gemm(A, B, local_C, shmem)
     shmem.barrier()
-    shmem.log("Validation passed.")
+    shmem.log("Validation passed.") if success else shmem.log("Validation failed.")
 
 if benchmark:
     perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)

@@ -93,7 +93,6 @@ def all_reduce_kernel(
     local_C_partial_ptr,
     c,
     tile_completed_ptr,
-    heap_bases,
     M_local,
     N_local,
     stride_cm_local,
@@ -104,17 +103,18 @@ def all_reduce_kernel(
     BLOCK_SIZE_N: tl.constexpr,
     GROUP_SIZE_M: tl.constexpr,
     total_tiles: tl.constexpr,
-    cur_rank: tl.constexpr,
-    world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     NUM_SMS: tl.constexpr,
+    heap_bases: tl.tensor,
+    cur_rank: tl.constexpr,
+    world_size: tl.constexpr,
+    REDUCTION_TILE_M: tl.constexpr = 128,
+    REDUCTION_TILE_N: tl.constexpr = 128,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
     begin_timestamp_ptr: tl.tensor = None,
     middle_min_timestamp_ptr: tl.tensor = None,
     middle_max_timestamp_ptr: tl.tensor = None,
     end_timestamp_ptr: tl.tensor = None,
-    REDUCTION_TILE_M: tl.constexpr = 128,
-    REDUCTION_TILE_N: tl.constexpr = 128,
-    COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(axis=0)
 
@@ -195,7 +195,6 @@ def all_scatter_kernel(
     local_C_partial_ptr,
     c,
     tile_completed_ptr,
-    heap_bases,
     M_local,
     N_local,
     stride_cm_local,
@@ -206,17 +205,18 @@ def all_scatter_kernel(
     BLOCK_SIZE_N: tl.constexpr,
     GROUP_SIZE_M_global: tl.constexpr,
     total_tiles: tl.constexpr,
-    cur_rank: tl.constexpr,
-    world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     NUM_SMS: tl.constexpr,
+    heap_bases: tl.tensor,
+    cur_rank: tl.constexpr,
+    world_size: tl.constexpr,
+    SCATTER_TILE_M: tl.constexpr = 128,
+    SCATTER_TILE_N: tl.constexpr = 128,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
     begin_timestamp_ptr: tl.tensor = None,
     middle_min_timestamp_ptr: tl.tensor = None,
     middle_max_timestamp_ptr: tl.tensor = None,
     end_timestamp_ptr: tl.tensor = None,
-    COMMUNICATION_TILE_M: tl.constexpr = 128,
-    COMMUNICATION_TILE_N: tl.constexpr = 128,
-    COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(axis=0)
 
@@ -254,22 +254,22 @@ def all_scatter_kernel(
         
         
         # Calculate the number of sub-tiles in each dimension
-        num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, COMMUNICATION_TILE_M)
-        num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, COMMUNICATION_TILE_N)
+        num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, SCATTER_TILE_M)
+        num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, SCATTER_TILE_N)
         total_sub_tiles = num_sub_tiles_m * num_sub_tiles_n
 
         # Flattened loop over all sub-tiles, triton is
         # better at handling flat loops instead of nested loops
         for sub_tile_idx in range(0, total_sub_tiles):
             # Calculate start_row and start_col for the current sub-tile
-            start_row = (sub_tile_idx // num_sub_tiles_n) * COMMUNICATION_TILE_M
-            start_col = (sub_tile_idx % num_sub_tiles_n) * COMMUNICATION_TILE_N
+            start_row = (sub_tile_idx // num_sub_tiles_n) * SCATTER_TILE_M
+            start_col = (sub_tile_idx % num_sub_tiles_n) * SCATTER_TILE_N
 
             # Extract the sub-mask and sub-offset for the current sub-block
             sub_mask, sub_offset = extract_submask_and_offset(
                 rm, rn, mask, rm_start, rn_start,
                 start_row, start_col,
-                COMMUNICATION_TILE_M, COMMUNICATION_TILE_N,
+                SCATTER_TILE_M, SCATTER_TILE_N,
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_local, stride_cn_local
             )
@@ -282,7 +282,7 @@ def all_scatter_kernel(
                 rm, rn + cur_rank * N_local, mask, rm_start,
                 rn_start + cur_rank * N_local,
                 start_row, start_col,
-                COMMUNICATION_TILE_M, COMMUNICATION_TILE_N,
+                SCATTER_TILE_M, SCATTER_TILE_N,
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_global, stride_cn_global
             )
@@ -307,7 +307,6 @@ def one_shot_kernel(
     partial_c,
     c,
     tile_completed_ptr,
-    heap_bases,
     M_local,
     N_local,
     stride_cm_local,
@@ -318,17 +317,18 @@ def one_shot_kernel(
     BLOCK_SIZE_N: tl.constexpr,
     GROUP_SIZE_M: tl.constexpr,
     total_tiles: tl.constexpr,
-    cur_rank: tl.constexpr,
-    world_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     NUM_SMS: tl.constexpr,
+    heap_bases: tl.tensor,
+    cur_rank: tl.constexpr,
+    world_size: tl.constexpr,
+    REDUCTION_TILE_M: tl.constexpr = 128,
+    REDUCTION_TILE_N: tl.constexpr = 128,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
     begin_timestamp_ptr: tl.tensor = None,
     middle_min_timestamp_ptr: tl.tensor = None,
     middle_max_timestamp_ptr: tl.tensor = None,
     end_timestamp_ptr: tl.tensor = None,
-    REDUCTION_TILE_M: tl.constexpr = 128,
-    REDUCTION_TILE_N: tl.constexpr = 128,
-    COLLECT_TIMESTAMPS: tl.constexpr = False,
 ):
     pid = tl.program_id(axis=0)
 
