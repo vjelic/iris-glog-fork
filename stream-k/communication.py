@@ -310,8 +310,9 @@ def one_shot_kernel(
 
     for tile in range(pid, total_tiles, NUM_SMS):
         result = 0
-        while result == 0:
-            compare = 1
+        # Wait for all ranks to produce this tile
+        while result != world_size:
+            compare = world_size
             value = 0
             result = pyshmem.atomic_cas(
                 tile_completed_ptr + tile,

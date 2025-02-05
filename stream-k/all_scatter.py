@@ -129,6 +129,7 @@ def run_experiment():
             locks,
             tile_completed,
             rank,
+            world_size,
             streamk_sms,
             BLK_M,
             BLK_N,

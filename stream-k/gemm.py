@@ -2,6 +2,11 @@ import triton
 import triton.language as tl
 from utils import read_realtime
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+import pyrocSHMEM as pyshmem
+
 @triton.jit()
 def persistent_gemm(
     A,
@@ -12,6 +17,7 @@ def persistent_gemm(
     locks,
     tile_completed,
     rank: tl.constexpr,
+    world_size: tl.constexpr,
     M,
     N,
     K,
@@ -31,9 +37,11 @@ def persistent_gemm(
     NUM_XCDS: tl.constexpr,
     BIAS: tl.constexpr,
     EVEN_K: tl.constexpr,
+    heap_bases_ptr: tl.tensor = None,
     mm_begin_timestamp_ptr: tl.tensor = None,
     mm_end_timestamp_ptr: tl.tensor = None,
     COLLECT_TIMESTAMPS: tl.constexpr = False,
+    NOTIFY_REMOTES: tl.constexpr = False,
 ):
     pid = tl.program_id(0)
 
@@ -109,13 +117,21 @@ def persistent_gemm(
         tl.store(C_, c, c_mask)
         
         # set the flag for the consumer kernel
-        compare = 0
-        value = 1
         tl.debug_barrier()
-        tl.atomic_cas(
-            tile_completed + tile_id, compare, value, sem="release", scope="sys"
-        )
-
+        
+        if NOTIFY_REMOTES:
+            for remote in range(world_size):
+                pyshmem.atomic_add(
+                    tile_completed + tile_id, 1, rank, remote, heap_bases_ptr, 
+                    sem="release", scope="sys"
+                )
+        else:
+            compare = 0
+            value = 1
+            tl.atomic_cas(
+                tile_completed + tile_id, compare, value, sem="release", scope="sys"
+            )
+        
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
             tl.atomic_max(mm_end_timestamp_ptr + tile_id, timestamp)

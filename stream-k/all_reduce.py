@@ -115,6 +115,7 @@ def reset_timers():
 
 def reset_buffers():
     C.fill_(0)
+    tile_completed.fill_(0)
     
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
@@ -133,6 +134,7 @@ def run_experiment():
             locks,
             tile_completed,
             rank,
+            world_size,
             streamk_sms,
             BLK_M,
             BLK_N,

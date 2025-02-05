@@ -17,7 +17,11 @@ gpu = "mi300"
 gpu = "mi250"
 
 total_sm = 304
+streamk_sms = 256
 # if gpu == "mi300" else 104
+
+# total_sm = 104
+# streamk_sms = 80
 
 from communication import one_shot_kernel
 from matmul_wrapper import matmul
@@ -29,9 +33,9 @@ from validation import validate_gemm
 
 debug = False
 validate = True
-benchmark = False
+benchmark = True
 
-COLLECT_TIMESTAMPS = True
+COLLECT_TIMESTAMPS = False
 
 m, n, k = 4864, 4096, 8256
 # m, n, k = 512, 512, 256 # one tile
@@ -75,7 +79,6 @@ waves_per_eu = 0
 mfmaInstrSize = 16
 kpack = 2
 
-streamk_sms = 256
 communication_sms = total_sm - streamk_sms
 communication_block_size = 256
 communication_num_threads = communication_block_size * communication_sms
@@ -115,6 +118,7 @@ def reset_timers():
 
 def reset_buffers():
     C.fill_(0)
+    tile_completed.fill_(0)
     
 gemm_stream = torch.cuda.Stream()
 comm_stream = torch.cuda.Stream()
@@ -133,6 +137,7 @@ def run_experiment():
             locks,
             tile_completed,
             rank,
+            world_size,
             streamk_sms,
             BLK_M,
             BLK_N,
@@ -146,7 +151,9 @@ def run_experiment():
             kpack,
             mm_begin_timestamp,
             mm_end_timestamp,
-            COLLECT_TIMESTAMPS
+            COLLECT_TIMESTAMPS,
+            shmem.get_heap_bases(),
+            True
         )
 
     # Reduction kernel
