@@ -278,12 +278,19 @@ def all_scatter_kernel(
             data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask)
             
             # Translate to global
-            sub_offset_global = sub_offset + cur_rank * N_local
+            sub_mask, global_offset = extract_submask_and_offset(
+                rm, rn + cur_rank * N_local, mask, rm_start,
+                rn_start + cur_rank * N_local,
+                start_row, start_col,
+                COMMUNICATION_TILE_M, COMMUNICATION_TILE_N,
+                BLOCK_SIZE_M, BLOCK_SIZE_N,
+                stride_cm_global, stride_cn_global
+            )
             
             # Store data to the global result using relaxed atomics
             for remote_rank in range(world_size):
                 pyshmem.put(
-                    c + sub_offset_global,
+                    c + global_offset,
                     data,
                     cur_rank,
                     remote_rank,
