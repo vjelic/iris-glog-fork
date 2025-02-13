@@ -125,11 +125,11 @@ options:
   --heap_size HEAP_SIZE
                         Iris heap size (default: 4294967296)
   --streamk_sms STREAMK_SMS
-                        Iris heap size (default: 256)
+                        Number of SMs for Stream-K (default: 256)
   --total_sms TOTAL_SMS
-                        Iris heap size (default: 304)
+                        Total number of SMs (default: 304)
   --communication_block_size COMMUNICATION_BLOCK_SIZE
-                        Iris heap size (default: 256)
+                        Communication block size (default: 256)
 ```
 
 
