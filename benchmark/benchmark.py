@@ -78,27 +78,32 @@ def launch_sbatch(
 
 
 def main(hashes, config, sbatch_script_content):
-    # algorithms = ["all_reduce", "all_scatter"]
-    algorithms = ["all_reduce"]
+    # algorithms = ["all_reduce", "all_scatter", "one_shot"]
+    algorithms = ["one_shot"]
 
     dataset_file = "dataset/deepseek-coder-6.7b-base.json"
     with open(dataset_file, "r") as file:
         data = json.load(file)
 
     unique_mkn = list(set((entry["m"], entry["k"], entry["n"]) for entry in data))
-    if partition == "mi3008x":
+    if "mi300" in partition:
         total_sms = 304
         streamk_sms = 256
-    else:
+    elif "mi250" in partition:
         total_sms = 104
         streamk_sms = 87
+    else:
+        total_sms = 304
+        streamk_sms = 256
 
     for hash in hashes:
         for algorithm in algorithms:
-            for m, k, n in unique_mkn:
+            for i, (m, k, n) in enumerate(unique_mkn):
                 max_gpus = 8
                 min_gpus = 1
                 num_gpus = min_gpus
+                print(f"Index: {i} / {len(unique_mkn)}, m: {m}, k: {k}, n: {n}")
+
                 while num_gpus <= max_gpus:
                     launch_sbatch(
                         config,
