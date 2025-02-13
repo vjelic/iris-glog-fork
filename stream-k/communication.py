@@ -5,7 +5,7 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
-import pyrocSHMEM as pyshmem
+import iris
 from utils import read_realtime
 
 @triton.jit
@@ -128,7 +128,7 @@ def all_reduce_kernel(
         while result == 0:
             compare = 1
             value = 0
-            result = pyshmem.atomic_cas(
+            result = iris.atomic_cas(
                 tile_completed_ptr + tile,
                 compare,
                 value,
@@ -176,7 +176,7 @@ def all_reduce_kernel(
 
             # Store data to the global result using atomic_add
             for remote_rank in range(world_size):
-                pyshmem.atomic_add(
+                iris.atomic_add(
                     c + sub_offset,
                     data,
                     cur_rank,
@@ -230,7 +230,7 @@ def all_scatter_kernel(
         while result == 0:
             compare = 1
             value = 0
-            result = pyshmem.atomic_cas(
+            result = iris.atomic_cas(
                 tile_completed_ptr + tile,
                 compare,
                 value,
@@ -251,8 +251,8 @@ def all_scatter_kernel(
             tile, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M_global,
             M_local, N_local
         )
-        
-        
+
+
         # Calculate the number of sub-tiles in each dimension
         num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, SCATTER_TILE_M)
         num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, SCATTER_TILE_N)
@@ -273,10 +273,10 @@ def all_scatter_kernel(
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_local, stride_cn_local
             )
-            
+
             # Load data from the local partial result
             data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask)
-            
+
             # Translate to global
             sub_mask, global_offset = extract_submask_and_offset(
                 rm, rn + cur_rank * N_local, mask, rm_start,
@@ -286,10 +286,10 @@ def all_scatter_kernel(
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_global, stride_cn_global
             )
-            
+
             # Store data to the global result using relaxed atomics
             for remote_rank in range(world_size):
-                pyshmem.put(
+                iris.put(
                     c + global_offset,
                     data,
                     cur_rank,
@@ -312,7 +312,7 @@ def one_shot_kernel(
     stride_cm_local,
     stride_cn_local,
     stride_cm_global,
-    stride_cn_global,    
+    stride_cn_global,
     BLOCK_SIZE_M: tl.constexpr,
     BLOCK_SIZE_N: tl.constexpr,
     GROUP_SIZE_M: tl.constexpr,
@@ -343,7 +343,7 @@ def one_shot_kernel(
         while result != world_size:
             compare = world_size
             value = 0
-            result = pyshmem.atomic_cas(
+            result = iris.atomic_cas(
                 tile_completed_ptr + tile,
                 compare,
                 value,
@@ -370,7 +370,7 @@ def one_shot_kernel(
         num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, REDUCTION_TILE_N)
         total_sub_tiles = num_sub_tiles_m * num_sub_tiles_n
 
-        # Flattened loop over all sub-tiles, triton is 
+        # Flattened loop over all sub-tiles, triton is
         # better at handling flat loops instead of nested loops
         for sub_tile_idx in range(0, total_sub_tiles):
             acc = tl.zeros((REDUCTION_TILE_M, REDUCTION_TILE_N), dtype=tl.float32)
@@ -387,11 +387,11 @@ def one_shot_kernel(
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_local, stride_cn_local
             )
-            
+
             # For all the ranks, load and accumulate
             for remote_rank in range(world_size):
                 # Load data from the remote partial result
-                acc += pyshmem.get(partial_c + sub_offset, cur_rank, remote_rank, heap_bases, mask=sub_mask)
+                acc += iris.get(partial_c + sub_offset, cur_rank, remote_rank, heap_bases, mask=sub_mask)
 
             # Sub-tile completed, store the output as a sub-tile to c
             tl.store(c + sub_offset, acc, mask=sub_mask)

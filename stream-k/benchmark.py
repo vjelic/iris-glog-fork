@@ -8,7 +8,7 @@ import json
 from utils import *
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
-import pyrocSHMEM as pyshmem
+import iris
 
 from communication import all_scatter_kernel, one_shot_kernel, all_reduce_kernel
 from matmul_wrapper import matmul
@@ -104,16 +104,16 @@ def parse_args():
     )
     parser.add_argument("--kpack", type=int, default=2, help="K packing size")
     parser.add_argument(
-        "--heap_size", type=int, default=1 << 32, help="pyrocSHMEM heap size"
+        "--heap_size", type=int, default=1 << 32, help="Iris heap size"
     )
     parser.add_argument(
-        "--streamk_sms", type=int, default=256, help="pyrocSHMEM heap size"
+        "--streamk_sms", type=int, default=256, help="Number of SMs for Stream-K"
     )
     parser.add_argument(
-        "--total_sms", type=int, default=304, help="pyrocSHMEM heap size"
+        "--total_sms", type=int, default=304, help="Total number of SMs"
     )
     parser.add_argument(
-        "--communication_block_size", type=int, default=256, help="pyrocSHMEM heap size"
+        "--communication_block_size", type=int, default=256, help="Communication block size"
     )
 
     return vars(parser.parse_args())
@@ -122,7 +122,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    shmem = pyshmem.pyrocSHMEM(args["heap_size"])
+    shmem = iris.Iris(args["heap_size"])
     rank = shmem.get_rank()
     world_size = shmem.get_num_ranks()
 
