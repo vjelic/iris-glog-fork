@@ -48,7 +48,7 @@ def main():
 
     if benchmark:
         perf = lambda ms: 2 * m * n * k * 1e-12 / (ms * 1e-3)
-        ms = triton.testing.do_bench(lambda: run_experiment())
+        ms = triton.testing.do_bench(run_experiment)
         print(f"Rank {rank}: {ms:.3f} ms  {perf(ms):.3f} tflops")
 
     dist.barrier()

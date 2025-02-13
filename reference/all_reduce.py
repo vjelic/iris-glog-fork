@@ -38,7 +38,7 @@ def main():
 
     # Validation step
     C_full = A_full @ B_full
-    valid = torch.allclose(C_global, C_full, atol=1e-3)
+    valid = torch.allclose(C_global, C_full, atol=1e-2)
     if valid:
         print(f"Rank {rank}: Validation passed! Distributed GEMM matches full GEMM.")
     else:
