@@ -8,6 +8,8 @@ import os
 # from streamk_kernel_atomic import streamk_gemm
 from gemm import persistent_gemm
 
+from utils import *
+
 gpu = "mi300"
 gpu = "mi250"
 
@@ -48,7 +50,7 @@ class matmul(torch.autograd.Function):
         mfmaInstrSize: int,
         kpack: int,
         heap_bases_ptr: torch.Tensor = None,
-        NOTIFY_REMOTES: bool = False,
+        COMMUNICATION_ALGORITHM: int = NONE,
         COLLECT_TIMESTAMPS: bool = False,
         mm_begin_timestamp: torch.Tensor = None,
         mm_end_timestamp: torch.Tensor = None,
@@ -137,7 +139,7 @@ class matmul(torch.autograd.Function):
             heap_bases_ptr=heap_bases_ptr,
             rank=rank,
             world_size=world_size,
-            NOTIFY_REMOTES=NOTIFY_REMOTES,
+            COMMUNICATION_ALGORITHM=COMMUNICATION_ALGORITHM,
             COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
             mm_begin_timestamp_ptr=mm_begin_timestamp,
             mm_end_timestamp_ptr=mm_end_timestamp,
@@ -176,7 +178,7 @@ class matmul(torch.autograd.Function):
         mfmaInstrSize=16,
         kpack=1,
         heap_bases_ptr: torch.Tensor = None,
-        NOTIFY_REMOTES: bool = False,
+        COMMUNICATION_ALGORITHM: int = NONE,
         COLLECT_TIMESTAMPS: bool = False,
         mm_begin_timestamp: torch.Tensor = None,
         mm_end_timestamp: torch.Tensor = None,
@@ -203,7 +205,7 @@ class matmul(torch.autograd.Function):
             mfmaInstrSize=mfmaInstrSize,
             kpack=kpack,
             heap_bases_ptr=heap_bases_ptr,
-            NOTIFY_REMOTES=NOTIFY_REMOTES,
+            COMMUNICATION_ALGORITHM=COMMUNICATION_ALGORITHM,
             COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
             mm_begin_timestamp=mm_begin_timestamp,
             mm_end_timestamp=mm_end_timestamp,

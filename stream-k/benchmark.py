@@ -5,6 +5,7 @@ import sys
 import os
 import argparse
 import json
+from utils import *
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
@@ -105,10 +106,10 @@ def parse_args():
         "--heap_size", type=int, default=1 << 32, help="pyrocSHMEM heap size"
     )
     parser.add_argument(
-        "--streamk_sms", type=int, default=8, help="pyrocSHMEM heap size"
+        "--streamk_sms", type=int, default=256, help="pyrocSHMEM heap size"
     )
     parser.add_argument(
-        "--total_sms", type=int, default=16, help="pyrocSHMEM heap size"
+        "--total_sms", type=int, default=304, help="pyrocSHMEM heap size"
     )
     parser.add_argument(
         "--communication_block_size", type=int, default=256, help="pyrocSHMEM heap size"
@@ -229,7 +230,13 @@ def main():
         },
     }
 
-    NOTIFY_REMOTES = True if args["algorithm"] == "one_shot" else False
+    COMMUNICATION_ALGORITHM = NONE
+    if args["algorithm"] == "one_shot":
+        COMMUNICATION_ALGORITHM = ONE_SHOT
+    elif args["algorithm"] == "all_reduce":
+        COMMUNICATION_ALGORITHM = ALL_REDUCE
+    elif args["algorithm"] == "all_scatter":
+        COMMUNICATION_ALGORITHM = ALL_SCATTER
 
     def run_experiment():
         nonlocal local_C
@@ -263,7 +270,7 @@ def main():
                 args["mfmaInstrSize"],
                 args["kpack"],
                 shmem.get_heap_bases(),
-                NOTIFY_REMOTES,
+                COMMUNICATION_ALGORITHM,
             )
             kernel_timing["streamk"]["end_event"].record()
             kernel_timing["streamk"]["experiments"] += 1
@@ -380,15 +387,17 @@ def main():
         success = validate_gemm(A, B, global_C, shmem)
         json_writer.add_field("success", success)
 
-        shmem.barrier()
         shmem.log("Validation passed.")
+
+    shmem.barrier()
 
     if args["benchmark"]:
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
         triton_ms = triton.testing.do_bench(run_experiment)
         triton_tflops = perf(triton_ms)
+        algo_string = args["algorithm"]
         shmem.log_stats(
-            f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {triton_tflops:.3f} tflops"
+            f"tile matmul + {algo_string} (grid={total_tiles}): {triton_ms:.3f} ms  {triton_tflops:.3f} tflops"
         )
 
         json_writer.add_field("triton_tflops", triton_tflops)
@@ -400,9 +409,12 @@ def main():
             )
             json_writer.add_field(k + "_experiments", kernel_timing[k]["experiments"])
 
+    shmem.barrier()
+
     if rank == 0:
         json_writer.flush()
 
+    shmem.barrier()
 
 if __name__ == "__main__":
     main()
