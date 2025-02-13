@@ -4,6 +4,14 @@ import triton.language as tl
 import json
 import numpy as np
 
+
+# Communication Algorithms
+ALL_SCATTER = tl.constexpr(1)
+ALL_REDUCE = tl.constexpr(2)
+ONE_SHOT = tl.constexpr(3)
+NONE = tl.constexpr(4)
+
+
 @triton.jit
 def read_realtime():
     tmp = tl.inline_asm_elementwise(
@@ -26,12 +34,12 @@ def dump_timers(mm_begin_timestamp,
                 comm_end_timestamp,
                 gpu_freq,
                 filename):
-    
+
     cycles_to_us = lambda cycles: (cycles / gpu_freq)
-    
+
     gemm_begin_us = cycles_to_us(mm_begin_timestamp.cpu().numpy())
     gemm_end_us = cycles_to_us(mm_end_timestamp.cpu().numpy())
-    
+
     comm_begin_us = cycles_to_us(comm_begin_timestamp.cpu().numpy())
     poll_end_us = cycles_to_us(comm_middle_max_timestamp.cpu().numpy())
     op_begin_us = cycles_to_us(comm_middle_min_timestamp.cpu().numpy())
@@ -44,14 +52,14 @@ def dump_timers(mm_begin_timestamp,
                         np.min(poll_end_us),
                         np.min(op_begin_us),
                         np.min(op_end_us))
-    
+
     gemm_begin_us = gemm_begin_us - min_timestamp
     gemm_end_us = gemm_end_us - min_timestamp
     comm_begin_us = comm_begin_us - min_timestamp
     poll_end_us = poll_end_us - min_timestamp
     op_begin_us = op_begin_us - min_timestamp
     op_end_us = op_end_us - min_timestamp
-    
+
     data = [
         {"tile_id": i,
          "gemm_begin": int(gemm_begin),

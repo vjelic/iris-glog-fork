@@ -8,6 +8,8 @@ import os
 # from streamk_kernel_atomic import streamk_gemm
 from gemm import persistent_gemm
 
+from utils import *
+
 gpu = "mi300"
 gpu = "mi250"
 
@@ -35,6 +37,7 @@ class matmul(torch.autograd.Function):
         locks: torch.Tensor,
         tile_completed: torch.Tensor,
         rank: int,
+        world_size: int,
         total_programs_streamk: int,
         BLK_M: int,
         BLK_N: int,
@@ -46,9 +49,11 @@ class matmul(torch.autograd.Function):
         waves_per_eu: int,
         mfmaInstrSize: int,
         kpack: int,
+        heap_bases_ptr: torch.Tensor = None,
+        COMMUNICATION_ALGORITHM: int = NONE,
+        COLLECT_TIMESTAMPS: bool = False,
         mm_begin_timestamp: torch.Tensor = None,
         mm_end_timestamp: torch.Tensor = None,
-        COLLECT_TIMESTAMPS: bool = False,
     ):
 
         #        assert a.is_contiguous() and b.is_contiguous(), "non-contiguous inputs are not supported"
@@ -107,7 +112,6 @@ class matmul(torch.autograd.Function):
             P,
             locks,
             tile_completed,
-            rank,
             M,
             N,
             K,
@@ -132,6 +136,10 @@ class matmul(torch.autograd.Function):
             waves_per_eu=waves_per_eu,
             matrix_instr_nonkdim=mfmaInstrSize,
             kpack=kpack,
+            heap_bases_ptr=heap_bases_ptr,
+            rank=rank,
+            world_size=world_size,
+            COMMUNICATION_ALGORITHM=COMMUNICATION_ALGORITHM,
             COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
             mm_begin_timestamp_ptr=mm_begin_timestamp,
             mm_end_timestamp_ptr=mm_end_timestamp,
@@ -157,6 +165,7 @@ class matmul(torch.autograd.Function):
         locks: torch.Tensor,
         tile_completed: torch.Tensor,
         rank: int,
+        world_size: int,
         grid: int,
         BLK_M=128,
         BLK_N=128,
@@ -168,9 +177,11 @@ class matmul(torch.autograd.Function):
         waves_per_eu=2,
         mfmaInstrSize=16,
         kpack=1,
+        heap_bases_ptr: torch.Tensor = None,
+        COMMUNICATION_ALGORITHM: int = NONE,
+        COLLECT_TIMESTAMPS: bool = False,
         mm_begin_timestamp: torch.Tensor = None,
         mm_end_timestamp: torch.Tensor = None,
-        COLLECT_TIMESTAMPS: bool = False,
     ):
         matmul._call(
             a=a,
@@ -181,6 +192,7 @@ class matmul(torch.autograd.Function):
             locks=locks,
             tile_completed=tile_completed,
             rank=rank,
+            world_size=world_size,
             total_programs_streamk=grid,
             BLK_M=BLK_M,
             BLK_N=BLK_N,
@@ -192,8 +204,10 @@ class matmul(torch.autograd.Function):
             waves_per_eu=waves_per_eu,
             mfmaInstrSize=mfmaInstrSize,
             kpack=kpack,
+            heap_bases_ptr=heap_bases_ptr,
+            COMMUNICATION_ALGORITHM=COMMUNICATION_ALGORITHM,
+            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
             mm_begin_timestamp=mm_begin_timestamp,
             mm_end_timestamp=mm_end_timestamp,
-            COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
         )
         return c

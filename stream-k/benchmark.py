@@ -5,12 +5,12 @@ import sys
 import os
 import argparse
 import json
+from utils import *
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import pyrocSHMEM as pyshmem
 
-from communication import all_scatter_kernel
-from communication import all_reduce_kernel
+from communication import all_scatter_kernel, one_shot_kernel, all_reduce_kernel
 from matmul_wrapper import matmul
 from validation import validate_gemm
 
@@ -40,7 +40,8 @@ class JSONWriter:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Parse matrix dimensions and configuration."
+        description="Parse matrix dimensions and configuration.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("-m", type=int, default=4864, help="Number of rows in matrix A")
     parser.add_argument(
@@ -60,14 +61,14 @@ def parse_args():
         "--datatype",
         type=str,
         default="fp32",
-        choices=["fp16", "fp32", "int8", "bf16", "tf32"],
+        choices=["fp16", "fp32", "int8", "bf16"],
         help="Datatype of computation",
     )
     parser.add_argument(
         "--algorithm",
         type=str,
         default="all_reduce",
-        choices=["all_reduce", "all_scatter"],
+        choices=["all_reduce", "all_scatter", "one_shot"],
         help="Datatype of computation",
     )
     parser.add_argument(
@@ -79,8 +80,18 @@ def parse_args():
     parser.add_argument("--BLK_M", type=int, default=256, help="Block size M")
     parser.add_argument("--BLK_N", type=int, default=256, help="Block size N")
     parser.add_argument("--BLK_K", type=int, default=32, help="Block size K")
-    parser.add_argument("--REDUCTION_TILE_M", type=int, default=128, help="M tile size for reduction")
-    parser.add_argument("--REDUCTION_TILE_N", type=int, default=128, help="N tile size for reduction")
+    parser.add_argument(
+        "--COMMUNICATION_TILE_M",
+        type=int,
+        default=128,
+        help="M tile size for reduction, scatter or one-shot",
+    )
+    parser.add_argument(
+        "--COMMUNICATION_TILE_N",
+        type=int,
+        default=128,
+        help="N tile size for reduction, scatter or one-shot",
+    )
     parser.add_argument("--gsize_m", type=int, default=8, help="Grid size M")
     parser.add_argument("--two_tiles", type=str, default="True", help="Use two tiles")
     parser.add_argument("--num_stages", type=int, default=1, help="Number of stages")
@@ -96,9 +107,11 @@ def parse_args():
         "--heap_size", type=int, default=1 << 32, help="pyrocSHMEM heap size"
     )
     parser.add_argument(
-        "--streamk_sms", type=int, default=8, help="pyrocSHMEM heap size"
+        "--streamk_sms", type=int, default=256, help="pyrocSHMEM heap size"
     )
-    parser.add_argument("--total_sms", type=int, default=16, help="pyrocSHMEM heap size")
+    parser.add_argument(
+        "--total_sms", type=int, default=304, help="pyrocSHMEM heap size"
+    )
     parser.add_argument(
         "--communication_block_size", type=int, default=256, help="pyrocSHMEM heap size"
     )
@@ -158,7 +171,7 @@ def main():
         args["n"] = args["n"] // world_size
         local_B = B[:, rank * args["n"] : (rank + 1) * args["n"]].clone()
         local_A = A
-    elif args["algorithm"] == "all_reduce":
+    elif args["algorithm"] == "all_reduce" or args["algorithm"] == "one_shot":
         rows_per_gpu = args["k"] // world_size
         start_row = rank * rows_per_gpu
         end_row = start_row + rows_per_gpu
@@ -215,10 +228,16 @@ def main():
             "end_event": torch.cuda.Event(enable_timing=True),
             "ms": 0,
             "experiments": 0,
-
-        }
+        },
     }
 
+    COMMUNICATION_ALGORITHM = NONE
+    if args["algorithm"] == "one_shot":
+        COMMUNICATION_ALGORITHM = ONE_SHOT
+    elif args["algorithm"] == "all_reduce":
+        COMMUNICATION_ALGORITHM = ALL_REDUCE
+    elif args["algorithm"] == "all_scatter":
+        COMMUNICATION_ALGORITHM = ALL_SCATTER
 
     def run_experiment():
         nonlocal local_C
@@ -239,6 +258,7 @@ def main():
                 locks,
                 tile_completed,
                 rank,
+                world_size,
                 args["streamk_sms"],
                 args["BLK_M"],
                 args["BLK_N"],
@@ -250,6 +270,8 @@ def main():
                 args["waves_per_eu"],
                 args["mfmaInstrSize"],
                 args["kpack"],
+                shmem.get_heap_bases(),
+                COMMUNICATION_ALGORITHM,
             )
             kernel_timing["streamk"]["end_event"].record()
             kernel_timing["streamk"]["experiments"] += 1
@@ -263,7 +285,6 @@ def main():
                     local_C,
                     global_C,
                     tile_completed,
-                    shmem.get_heap_bases(),
                     args["m"],
                     args["n"],
                     local_C.stride(0),
@@ -274,17 +295,19 @@ def main():
                     args["BLK_N"],
                     args["gsize_m"],
                     total_tiles,
+                    args["communication_block_size"],
+                    communication_sms,
+                    shmem.get_heap_bases(),
                     rank,
                     world_size,
-                    BLOCK_SIZE=args["communication_block_size"],
-                    NUM_SMS=communication_sms,
+                    args["COMMUNICATION_TILE_M"],
+                    args["COMMUNICATION_TILE_N"],
                 )
-            else:
+            elif args["algorithm"] == "all_reduce":
                 ss = all_reduce_kernel[grid](
                     local_C,
                     global_C,
                     tile_completed,
-                    shmem.get_heap_bases(),
                     args["m"],
                     args["n"],
                     local_C.stride(0),
@@ -295,24 +318,52 @@ def main():
                     args["BLK_N"],
                     args["gsize_m"],
                     total_tiles,
+                    args["communication_block_size"],
+                    communication_sms,
+                    shmem.get_heap_bases(),
                     rank,
                     world_size,
-                    BLOCK_SIZE=args["communication_block_size"],
-                    NUM_SMS=communication_sms,
-                    REDUCTION_TILE_M=args["REDUCTION_TILE_M"],
-                    REDUCTION_TILE_N=args["REDUCTION_TILE_N"],
+                    args["COMMUNICATION_TILE_M"],
+                    args["COMMUNICATION_TILE_N"],
+                )
+            elif args["algorithm"] == "one_shot":
+                ss = one_shot_kernel[grid](
+                    local_C,
+                    global_C,
+                    tile_completed,
+                    args["m"],
+                    args["n"],
+                    local_C.stride(0),
+                    local_C.stride(1),
+                    C.stride(0),
+                    C.stride(1),
+                    args["BLK_M"],
+                    args["BLK_N"],
+                    args["gsize_m"],
+                    total_tiles,
+                    args["communication_block_size"],
+                    communication_sms,
+                    shmem.get_heap_bases(),
+                    rank,
+                    world_size,
+                    args["COMMUNICATION_TILE_M"],
+                    args["COMMUNICATION_TILE_N"],
                 )
             kernel_timing["communication"]["end_event"].record()
             kernel_timing["communication"]["experiments"] += 1
 
             comm_registers = ss.n_regs
             comm_spills = ss.n_spills
-            shmem.log_debug(f"Communication kernel: {ss.n_regs} registers used, {ss.n_spills} spills")
+            shmem.log_debug(
+                f"Communication kernel: {ss.n_regs} registers used, {ss.n_spills} spills"
+            )
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.synchronize()
         for k in ["streamk", "communication"]:
-            ms = kernel_timing[k]["start_event"].elapsed_time(kernel_timing[k]["end_event"])
+            ms = kernel_timing[k]["start_event"].elapsed_time(
+                kernel_timing[k]["end_event"]
+            )
             kernel_timing[k]["ms"] += ms
 
         shmem.barrier()
@@ -321,10 +372,8 @@ def main():
     run_experiment()
 
     for k in ["streamk", "communication"]:
-        kernel_timing[k]["ms"]= 0
-        kernel_timing[k]["experiments"]= 0
-
-
+        kernel_timing[k]["ms"] = 0
+        kernel_timing[k]["experiments"] = 0
 
     streamk_registers = matmul.streamk_registers
     streamk_spills = matmul.streamk_spills
@@ -339,28 +388,34 @@ def main():
         success = validate_gemm(A, B, global_C, shmem)
         json_writer.add_field("success", success)
 
-        shmem.barrier()
         shmem.log("Validation passed.")
+
+    shmem.barrier()
 
     if args["benchmark"]:
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
-        triton_ms = triton.testing.do_bench(run_experiment())
+        triton_ms = triton.testing.do_bench(run_experiment)
         triton_tflops = perf(triton_ms)
+        algo_string = args["algorithm"]
         shmem.log_stats(
-            f"tile matmul (grid={total_tiles}): {triton_ms:.3f} ms  {triton_tflops:.3f} tflops"
+            f"tile matmul + {algo_string} (grid={total_tiles}): {triton_ms:.3f} ms  {triton_tflops:.3f} tflops"
         )
 
         json_writer.add_field("triton_tflops", triton_tflops)
         json_writer.add_field("triton_ms", triton_ms)
 
         for k in ["streamk", "communication"]:
-            json_writer.add_field(k + "_ms", kernel_timing[k]["ms"] / kernel_timing[k]["experiments"])
+            json_writer.add_field(
+                k + "_ms", kernel_timing[k]["ms"] / kernel_timing[k]["experiments"]
+            )
             json_writer.add_field(k + "_experiments", kernel_timing[k]["experiments"])
 
+    shmem.barrier()
 
     if rank == 0:
         json_writer.flush()
 
+    shmem.barrier()
 
 if __name__ == "__main__":
     main()

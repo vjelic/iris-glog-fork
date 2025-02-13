@@ -1,6 +1,11 @@
 import triton
 import triton.language as tl
-from utils import read_realtime
+from utils import *
+
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+import pyrocSHMEM as pyshmem
 
 @triton.jit()
 def persistent_gemm(
@@ -11,7 +16,6 @@ def persistent_gemm(
     P,
     locks,
     tile_completed,
-    rank: tl.constexpr,
     M,
     N,
     K,
@@ -31,9 +35,14 @@ def persistent_gemm(
     NUM_XCDS: tl.constexpr,
     BIAS: tl.constexpr,
     EVEN_K: tl.constexpr,
+    heap_bases_ptr: tl.tensor,
+    rank: tl.constexpr,
+    world_size: tl.constexpr,
+    NOTIFY_REMOTES: tl.constexpr = False,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
     mm_begin_timestamp_ptr: tl.tensor = None,
     mm_end_timestamp_ptr: tl.tensor = None,
-    COLLECT_TIMESTAMPS: tl.constexpr = False,
+    COMMUNICATION_ALGORITHM: tl.constexpr = ALL_SCATTER
 ):
     pid = tl.program_id(0)
 
@@ -107,14 +116,22 @@ def persistent_gemm(
         c_mask = (rm[:, None] < M) & (rn[None, :] < N)
         C_ = C + rm[:, None] * stride_cm + rn[None, :] * stride_cn
         tl.store(C_, c, c_mask)
-        
+
         # set the flag for the consumer kernel
-        compare = 0
-        value = 1
         tl.debug_barrier()
-        tl.atomic_cas(
-            tile_completed + tile_id, compare, value, sem="release", scope="sys"
-        )
+
+        if COMMUNICATION_ALGORITHM == ONE_SHOT:
+            for remote in range(world_size):
+                pyshmem.atomic_add(
+                    tile_completed + tile_id, 1, rank, remote, heap_bases_ptr,
+                    sem="release", scope="sys"
+                )
+        elif COMMUNICATION_ALGORITHM == ALL_SCATTER or COMMUNICATION_ALGORITHM == ALL_REDUCE:
+            compare = 0
+            value = 1
+            tl.atomic_cas(
+                tile_completed + tile_id, compare, value, sem="release", scope="sys"
+            )
 
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
