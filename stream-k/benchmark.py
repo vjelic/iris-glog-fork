@@ -40,7 +40,8 @@ class JSONWriter:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Parse matrix dimensions and configuration."
+        description="Parse matrix dimensions and configuration.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("-m", type=int, default=4864, help="Number of rows in matrix A")
     parser.add_argument(
@@ -60,7 +61,7 @@ def parse_args():
         "--datatype",
         type=str,
         default="fp32",
-        choices=["fp16", "fp32", "int8", "bf16", "tf32"],
+        choices=["fp16", "fp32", "int8", "bf16"],
         help="Datatype of computation",
     )
     parser.add_argument(
