@@ -86,13 +86,17 @@ def main(hashes, config, sbatch_script_content):
         data = json.load(file)
 
     unique_mkn = list(set((entry["m"], entry["k"], entry["n"]) for entry in data))
-    if "mi300" in partition:
-        total_sms = 304
-        streamk_sms = 256
-    elif "mi250" in partition:
-        total_sms = 104
-        streamk_sms = 87
+    if config["partition"] != None:
+        if "mi300" in config["partition"]:
+            print("Running on MI300")
+            total_sms = 304
+            streamk_sms = 256
+        elif "mi250" in config["partition"]:
+            print("Running on MI250")
+            total_sms = 104
+            streamk_sms = 87
     else:
+        print("Assuming MI300")
         total_sms = 304
         streamk_sms = 256
 
