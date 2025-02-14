@@ -41,7 +41,7 @@ class JSONWriter:
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Parse matrix dimensions and configuration.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("-m", type=int, default=4864, help="Number of rows in matrix A")
     parser.add_argument(
@@ -103,9 +103,7 @@ def parse_args():
         "--mfmaInstrSize", type=int, default=16, help="MFMA instruction size"
     )
     parser.add_argument("--kpack", type=int, default=2, help="K packing size")
-    parser.add_argument(
-        "--heap_size", type=int, default=1 << 32, help="Iris heap size"
-    )
+    parser.add_argument("--heap_size", type=int, default=1 << 32, help="Iris heap size")
     parser.add_argument(
         "--streamk_sms", type=int, default=256, help="Number of SMs for Stream-K"
     )
@@ -113,7 +111,10 @@ def parse_args():
         "--total_sms", type=int, default=304, help="Total number of SMs"
     )
     parser.add_argument(
-        "--communication_block_size", type=int, default=256, help="Communication block size"
+        "--communication_block_size",
+        type=int,
+        default=256,
+        help="Communication block size",
     )
 
     return vars(parser.parse_args())
@@ -278,6 +279,8 @@ def main():
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push(f"Communication")
+        shmem.barrier()  # TODO: REMOVE THIS
+
         with torch.cuda.stream(comm_stream):
             kernel_timing["communication"]["start_event"].record()
             if args["algorithm"] == "all_scatter":
@@ -385,13 +388,24 @@ def main():
 
     if args["validate"]:
         matmul.set_debug(False)
+        # Validate global result
         success = validate_gemm(A, B, global_C, shmem)
+        passed_str = "passed" if success else "failed"
+        shmem.log(f"Final C validation {passed_str}.")
+
         json_writer.add_field("success", success)
 
-        shmem.log("Validation passed.")
+        # Validate partial result
+        success = validate_gemm(local_A, local_B, local_C, shmem)
+        passed_str = "passed" if success else "failed"
+        shmem.log(f"Local C validation {passed_str}.")
 
     shmem.barrier()
 
+    # shmem.log("Finished validating.")
+    # for id, t in enumerate(tile_completed):
+    #     shmem.log(f"tile {id}: t: {t}")
+    # shmem.barrier()
     if args["benchmark"]:
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
         triton_ms = triton.testing.do_bench(run_experiment)
@@ -411,11 +425,11 @@ def main():
             json_writer.add_field(k + "_experiments", kernel_timing[k]["experiments"])
 
     shmem.barrier()
-
     if rank == 0:
         json_writer.flush()
 
     shmem.barrier()
+
 
 if __name__ == "__main__":
     main()

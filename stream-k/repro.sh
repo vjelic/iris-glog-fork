@@ -1,0 +1,1 @@
+mpirun --allow-run-as-root -np 2 python benchmark.py --algorithm all_reduce     -m 12288 -n 192 -k 4096  --total_sms 304  --streamk_sms 256  --validate --debug  --heap_size 8589934592  --output_file bad.log &> log.txt
