@@ -135,19 +135,11 @@ def main():
     B = shmem.randn(args["n"], args["k"], device="cuda", dtype=datatype).T
     C = shmem.zeros((args["m"], args["n"]), device="cuda", dtype=A.dtype)
 
-    json_writer = JSONWriter(args["output_file"])
-
-    for key, value in args.items():
-        json_writer.add_field(key, value)
-
     args["M"] = args["m"]
     args["N"] = args["n"]
     args["K"] = args["k"]
 
-    json_writer.add_field("m", args["m"])
-    json_writer.add_field("n", args["n"])
-    json_writer.add_field("k", args["k"])
-    json_writer.add_field("algorithm", args["algorithm"])
+    json_writer = JSONWriter(args["output_file"])
     json_writer.add_field("world_size", world_size)
 
     # Splitting
@@ -164,6 +156,10 @@ def main():
     else:
         print("Unknown algorithm.")
         exit(1)
+
+    for key, value in args.items():
+        json_writer.add_field(key, value)
+
     global_C = shmem.zeros((args["M"], args["N"]), device="cuda", dtype=A.dtype)
     local_C = shmem.zeros((args["m"], args["n"]), device="cuda", dtype=A.dtype)
 
@@ -180,7 +176,9 @@ def main():
     communication_sms = args["total_sms"] - args["streamk_sms"]
 
     communication_num_threads = args["communication_block_size"] * communication_sms
-    comm_grid = lambda meta: (triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),)
+    comm_grid = lambda meta: (
+        triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),
+    )
 
     locks = shmem.zeros((args["streamk_sms"],), device="cuda", dtype=torch.int32)
     tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
@@ -203,7 +201,7 @@ def main():
     # shmem.log(f"A {local_A.shape}")
     # shmem.log(f"B {local_B.shape}")
     # shmem.log(f"C {local_C.shape}")
-    
+
     kernel_timing = {
         "streamk": {
             "start_event": torch.cuda.Event(enable_timing=True),
@@ -240,7 +238,7 @@ def main():
         # shmem.barrier()
         if args["trace_tiles"]:
             timestamps.reset()
-            
+
         torch.cuda.nvtx.range_push(f"GEMM + Communication")
         torch.cuda.nvtx.range_push(f"GEMM")
         with torch.cuda.stream(gemm_stream):
@@ -439,20 +437,19 @@ def main():
             json_writer.add_field(k + "_experiments", kernel_timing[k]["experiments"])
 
     shmem.barrier()
-    
+
     shmem.log("Benchmarking finished.")
-    
+
     if rank == 0:
         json_writer.flush()
         json_writer.display()
-        
 
     if args["trace_tiles"] and rank == 0:
-        gpu_freq = shmem.wall_clock_rate(rank) * 1e-3 
+        gpu_freq = shmem.wall_clock_rate(rank) * 1e-3
         algo_string = args["algorithm"]
         filename = f"gemm_tiles_{algo_string}_trace_rank{rank}.json"
         timestamps.to_json(filename, gpu_freq)
-    
+
     shmem.barrier()
 
 
