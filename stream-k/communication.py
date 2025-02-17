@@ -170,7 +170,7 @@ def all_reduce_kernel(
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_local, stride_cn_local
             )
-
+            
             # Load data from the local partial result
             data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask)
 
@@ -257,7 +257,16 @@ def all_scatter_kernel(
         num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, SCATTER_TILE_M)
         num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, SCATTER_TILE_N)
         total_sub_tiles = num_sub_tiles_m * num_sub_tiles_n
-
+        
+        # if tile == 0:
+        #     print("total_sub_tiles: ", total_sub_tiles)
+        #     print("num_sub_tiles_m: ", num_sub_tiles_m)
+        #     print("num_sub_tiles_n: ", num_sub_tiles_n)
+        #     print("BLOCK_SIZE_M: ", BLOCK_SIZE_M)
+        #     print("BLOCK_SIZE_N: ", BLOCK_SIZE_N)
+        #     print("SCATTER_TILE_M: ", SCATTER_TILE_M)
+        #     print("SCATTER_TILE_N: ", SCATTER_TILE_N)
+            
         # Flattened loop over all sub-tiles, triton is
         # better at handling flat loops instead of nested loops
         for sub_tile_idx in range(0, total_sub_tiles):
@@ -286,7 +295,6 @@ def all_scatter_kernel(
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_global, stride_cn_global
             )
-
             # Store data to the global result using relaxed atomics
             for remote_rank in range(world_size):
                 iris.put(
@@ -297,7 +305,18 @@ def all_scatter_kernel(
                     heap_bases,
                     mask=sub_mask
                 )
-
+                # if old != 0.0:
+            # if get_threadidx_x() == 0:
+                # if sub_tile_idx == 0 and (cur_rank == 0 and remote_rank == 0):
+                # if True:
+                    # tl.device_print("old*offset: ", old*global_offset)
+                    # tl.device_print("old: ", old)
+                    # tl.device_print("idx: ", sub_tile_idx)
+                    # tl.device_print("off: ", global_offset)
+                    # tl.device_print("mask: ", sub_mask)
+                    # tl.device_print("total_tiles: ", total_tiles)
+                    # tl.device_print("total_sub_tiles: ", total_sub_tiles)
+                    
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
             tl.atomic_max(end_timestamp_ptr + tile, timestamp)
