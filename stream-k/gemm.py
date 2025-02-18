@@ -5,7 +5,7 @@ from utils import *
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
-import pyrocSHMEM as pyshmem
+import iris
 
 @triton.jit()
 def persistent_gemm(
@@ -122,7 +122,7 @@ def persistent_gemm(
 
         if COMMUNICATION_ALGORITHM == ONE_SHOT:
             for remote in range(world_size):
-                pyshmem.atomic_add(
+                iris.atomic_add(
                     tile_completed + tile_id, 1, rank, remote, heap_bases_ptr,
                     sem="release", scope="sys"
                 )

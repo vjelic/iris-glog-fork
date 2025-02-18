@@ -1,13 +1,15 @@
-# Stream-K + pyrocSHMEM
+# Iris
 
+Iris is a Python- and Triton-based library that provide SHMEM-like RDMA support in Triton.
 
-This repository contains code for experimenting with Stream-K GEMMs + communication kernels.
+## Examples
+
+### Stream-K + Iris
 
 ![dist_gemm](images/dist_gemm.excalidraw.svg)
 
-
-## Algorithms
-At the moment we assume that:
+#### Algorithms
+For Stream-K GEMMs + communication kernels, at the moment, we assume that:
 
 $C = A \times B$
 where,
@@ -24,10 +26,10 @@ Where $B$ is partitioned *row-wise* and hence $A$ is partitioned column-wise so 
 Where $B$ is partitioned  *column-wise* and hence each rank produces non-overlapping columns in the output $C$ matrix such that we only need all gather/scatter to broadcast the final result (left figure).
 
 
-## Getting started
+#### Getting started
 
-### Docker
-We provide a docker file that sets up all dependancies. To build the image:
+##### Docker
+We provide a docker file that sets up all dependencies. To build the image:
 
 ```shell
 cd ./docker
@@ -43,8 +45,8 @@ alias drun='docker run -it --network=host --device=/dev/kfd --device=/dev/dri --
 drun sk-pyrocshmem # or the name of the image you specified to build.sh
 ```
 
-### Apptainer
-We provide an Apptainer definition file contains all dependancies to reproduce the result. You can also copy the contents of the `.def` file and create a similar Docker container. We use Apptainer on HPC Fund so we are currently maintaining that. To build the image:
+##### Apptainer
+We provide an Apptainer definition file contains all dependencies to reproduce the result. You can also copy the contents of the `.def` file and create a similar Docker container. We use Apptainer on HPC Fund so we are currently maintaining that. To build the image:
 ```shell
 ./apptainer/build.sh
 ```
@@ -60,12 +62,12 @@ Once inside the Apptainer image, source the `activate.sh` script.
 source activate.sh
 ```
 
-### Run Example
+#### Run Example
 
 Once you are inside a Conda environment (in docker or apptainer). Before running code, you need to build `finegrained_alloc`, a C library interface for fine-grained allocation. The plugin is required to redirect PyTorch allocation to fine-grained memory.
 
 ```shell
-cd pyrocSHMEM/finegrained_alloc/
+cd iris/finegrained_alloc/
 ./build.sh
 cd ../../
 ```
@@ -121,17 +123,17 @@ options:
                         MFMA instruction size (default: 16)
   --kpack KPACK         K packing size (default: 2)
   --heap_size HEAP_SIZE
-                        pyrocSHMEM heap size (default: 4294967296)
+                        Iris heap size (default: 4294967296)
   --streamk_sms STREAMK_SMS
-                        pyrocSHMEM heap size (default: 256)
+                        Number of SMs for Stream-K (default: 256)
   --total_sms TOTAL_SMS
-                        pyrocSHMEM heap size (default: 304)
+                        Total number of SMs (default: 304)
   --communication_block_size COMMUNICATION_BLOCK_SIZE
-                        pyrocSHMEM heap size (default: 256)
+                        Communication block size (default: 256)
 ```
 
 
-### Reference implementations
+#### Reference implementations
 
 There are two reference implementations (`all_gather.py` and `all_reduce.py`) that use RCCL inside the [reference](./reference/) directory. To run any of them,
 

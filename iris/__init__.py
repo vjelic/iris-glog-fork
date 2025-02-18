@@ -17,8 +17,8 @@ finegrained_allocator = torch.cuda.memory.CUDAPluggableAllocator(
 torch.cuda.memory.change_current_allocator(finegrained_allocator)
 
 
-from .pyrocSHMEM import (
-    pyrocSHMEM,
+from .iris import (
+    Iris,
     translate,
     get,
     put,
@@ -29,7 +29,7 @@ from .pyrocSHMEM import (
 )
 
 __all__ = [
-    "pyrocSHMEM",
+    "Iris",
     "translate",
     "get",
     "put",

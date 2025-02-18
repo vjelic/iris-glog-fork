@@ -1,4 +1,4 @@
-# pyrocSHMEM library
+# Iris library
 
 Python- and Triton-based library facilitating RDMAs for intra-node communication via IPC conduit.
 

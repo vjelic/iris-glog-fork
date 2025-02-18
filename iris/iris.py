@@ -1,12 +1,12 @@
 import triton
 import triton.language as tl
 
-from pyrocSHMEM._mpi_helpers import (
+from iris._mpi_helpers import (
     init_mpi,
     mpi_allgather,
     world_barrier,
 )
-from pyrocSHMEM._hip import (
+from iris._hip import (
     set_device,
     get_device,
     count_devices,
@@ -24,7 +24,7 @@ STATS = True
 LOGGING = True
 DEBUG = False
 
-class pyrocSHMEM:
+class Iris:
     def __init__(self, heap_size=1 << 30):
 
         # Initialize
@@ -81,15 +81,15 @@ class pyrocSHMEM:
 
     def log(self, message):
         if LOGGING:
-            print(f"[pyrocSHMEM] [{self.cur_rank}/{self.num_ranks}] {message}")
+            print(f"[Iris] [{self.cur_rank}/{self.num_ranks}] {message}")
 
     def log_debug(self, message):
         if DEBUG:
-            print(f"[pyrocSHMEM] [{self.cur_rank}/{self.num_ranks}] {message}")
+            print(f"[Iris] [{self.cur_rank}/{self.num_ranks}] {message}")
 
     def log_stats(self, message):
         if STATS:
-            print(f"[pyrocSHMEM] [{self.cur_rank}/{self.num_ranks}] {message}")
+            print(f"[Iris] [{self.cur_rank}/{self.num_ranks}] {message}")
 
     def allocate(self, num_elements, dtype):
         self.log_debug(f"allocate: num_elements = {num_elements}, dtype = {dtype}")
@@ -213,7 +213,7 @@ class pyrocSHMEM:
 
     def get_num_ranks(self):
         return self.num_ranks
-    
+
     def wall_clock_rate(self, rank):
         return get_wall_clock_rate(rank)
 
@@ -262,7 +262,7 @@ def atomic_add(
     src_ptr, data, cur_rank, target_rank, heap_bases, mask=None, sem=None, scope=None
 ):
     dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
-    tl.atomic_add(dst_ptr, data, mask=mask, sem=sem, scope=scope)
+    return tl.atomic_add(dst_ptr, data, mask=mask, sem=sem, scope=scope)
 
 
 @triton.jit
@@ -270,7 +270,7 @@ def atomic_sub(
     src_ptr, data, cur_rank, target_rank, heap_bases, mask=None, sem=None, scope=None
 ):
     dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
-    tl.atomic_sub(dst_ptr, data, mask=mask, sem=sem, scope=scope)
+    return tl.atomic_sub(dst_ptr, data, mask=mask, sem=sem, scope=scope)
 
 
 @triton.jit
