@@ -198,10 +198,6 @@ def main():
     comm_registers = 0
     comm_spills = 0
 
-    # shmem.log(f"A {local_A.shape}")
-    # shmem.log(f"B {local_B.shape}")
-    # shmem.log(f"C {local_C.shape}")
-
     kernel_timing = {
         "streamk": {
             "start_event": torch.cuda.Event(enable_timing=True),
@@ -234,10 +230,11 @@ def main():
         nonlocal comm_registers
         nonlocal comm_spills
         nonlocal kernel_timing
-        shmem.barrier()
-        # shmem.barrier()
+        
         if args["trace_tiles"]:
             timestamps.reset()
+            shmem.barrier()
+            
 
         torch.cuda.nvtx.range_push(f"GEMM + Communication")
         torch.cuda.nvtx.range_push(f"GEMM")
@@ -380,9 +377,12 @@ def main():
             kernel_timing[k]["ms"] += ms
 
         shmem.barrier()
-        # shmem.barrier()
         torch.cuda.nvtx.range_pop()
 
+    # Synchronize across all GPUs
+    shmem.barrier()
+    
+    # Warmup    
     run_experiment()
 
     for k in ["streamk", "communication"]:
@@ -409,15 +409,13 @@ def main():
 
         # Validate partial result
         success = validate_gemm(local_A, local_B, local_C, shmem)
+        json_writer.add_field("success_partial", success)
         passed_str = "passed" if success else "failed"
         shmem.log(f"Local C validation {passed_str}.")
 
-    shmem.barrier()
+        # Wait for all to finish validation
+        shmem.barrier()
 
-    shmem.log("Finished validating.")
-    # for id, t in enumerate(tile_completed):
-    #     shmem.log(f"tile {id}: t: {t}")
-    shmem.barrier()
     if args["benchmark"]:
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
         triton_ms = triton.testing.do_bench(run_experiment)
@@ -436,9 +434,8 @@ def main():
             )
             json_writer.add_field(k + "_experiments", kernel_timing[k]["experiments"])
 
-    shmem.barrier()
-
-    shmem.log("Benchmarking finished.")
+        # Wait for all to finish benchmarking
+        shmem.barrier()
 
     if rank == 0:
         json_writer.flush()

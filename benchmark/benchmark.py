@@ -133,8 +133,6 @@ def main(hashes, config, sbatch_script_content):
                             min_gpus = 1
                             num_gpus = min_gpus
                             print(f"Index: {i} / {len(unique_mkn)}, m: {m}, k: {k}, n: {n}")
-                            # if i <= 60:
-                            #     continue
                             while num_gpus <= max_gpus:
                                 launch_sbatch(
                                     config,
