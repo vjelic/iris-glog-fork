@@ -231,6 +231,8 @@ def main():
         nonlocal comm_spills
         nonlocal kernel_timing
         
+        shmem.barrier()
+        
         if args["trace_tiles"]:
             timestamps.reset()
             shmem.barrier()
@@ -369,14 +371,14 @@ def main():
                 )
 
         torch.cuda.nvtx.range_pop()
-        torch.cuda.synchronize()
+        shmem.barrier()
+
         for k in ["streamk", "communication"]:
             ms = kernel_timing[k]["start_event"].elapsed_time(
                 kernel_timing[k]["end_event"]
             )
             kernel_timing[k]["ms"] += ms
 
-        shmem.barrier()
         torch.cuda.nvtx.range_pop()
 
     # Synchronize across all GPUs
@@ -418,7 +420,7 @@ def main():
 
     if args["benchmark"]:
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
-        triton_ms = triton.testing.do_bench(run_experiment)
+        triton_ms = do_bench(run_experiment, shmem.barrier)
         triton_tflops = perf(triton_ms)
         algo_string = args["algorithm"]
         shmem.log_stats(
