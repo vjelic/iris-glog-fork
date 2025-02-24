@@ -24,6 +24,7 @@ STATS = True
 LOGGING = True
 DEBUG = False
 
+
 class Iris:
     def __init__(self, heap_size=1 << 30):
 
@@ -127,9 +128,10 @@ class Iris:
         tensor[:] = torch.arange(num_elements, device="cuda", dtype=dtype)
         return tensor.reshape(size)
 
-
     def zeros(self, *size, dtype=torch.int, device=None, requires_grad=False, **kwargs):
-        self.log_debug(f"zeros: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}")
+        self.log_debug(
+            f"zeros: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.zero_()
@@ -137,17 +139,28 @@ class Iris:
             tensor.requires_grad_()
         return tensor.reshape(size)
 
-
-    def randn(self, *size, generator=None, dtype=torch.float, layout=torch.strided, device=None, requires_grad=False, pin_memory=False):
-        self.log_debug(f"randn: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}, pin_memory = {pin_memory}")
+    def randn(
+        self,
+        *size,
+        generator=None,
+        dtype=torch.float,
+        layout=torch.strided,
+        device=None,
+        requires_grad=False,
+        pin_memory=False,
+    ):
+        self.log_debug(
+            f"randn: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}, pin_memory = {pin_memory}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
-        random_data = torch.randn(num_elements, generator=generator, dtype=dtype, device=device, layout=layout)
+        random_data = torch.randn(
+            num_elements, generator=generator, dtype=dtype, device=device, layout=layout
+        )
         tensor.copy_(random_data)
         if requires_grad:
             tensor.requires_grad_()
         return tensor.reshape(size)
-
 
     def ones(self, *size, dtype=torch.int):
         self.log_debug(f"ones: size = {size}, dtype = {dtype}")
@@ -157,19 +170,22 @@ class Iris:
         return tensor.reshape(size)
 
     def full(self, size, fill_value, dtype=torch.int):
-        self.log_debug(f"full: size = {size}, fill_value = {fill_value}, dtype = {dtype}")
+        self.log_debug(
+            f"full: size = {size}, fill_value = {fill_value}, dtype = {dtype}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.fill_(fill_value)
         return tensor.reshape(size)
 
     def uniform(self, size, low=0.0, high=1.0, dtype=torch.float):
-        self.log_debug(f"uniform: size = {size}, low = {low}, high = {high}, dtype = {dtype}")
+        self.log_debug(
+            f"uniform: size = {size}, low = {low}, high = {high}, dtype = {dtype}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.uniform_(low, high)
         return tensor.reshape(size)
-
 
     def empty(self, size, dtype=torch.float):
         self.log_debug(f"empty: size = {size}, dtype = {dtype}")
@@ -178,12 +194,13 @@ class Iris:
         return tensor.reshape(size)
 
     def randint(self, size, low, high, dtype=torch.int):
-        self.log_debug(f"randint: size = {size}, low = {low}, high = {high}, dtype = {dtype}")
+        self.log_debug(
+            f"randint: size = {size}, low = {low}, high = {high}, dtype = {dtype}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor[:] = torch.randint(low, high, size, device="cuda", dtype=dtype)
         return tensor.reshape(size)
-
 
     def linspace(self, start, end, steps, dtype=torch.float):
         self.log_debug(
@@ -201,9 +218,10 @@ class Iris:
         return self.heap_bases
 
     def barrier(self):
-        world_barrier()
-        # Not sure if we have to sync here...
+        # Wait for all GPUs to finish work
         torch.cuda.synchronize()
+        # MPI barrier
+        world_barrier()
 
     def get_device(self):
         return self.memory_pool.device

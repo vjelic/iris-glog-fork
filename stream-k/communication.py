@@ -170,7 +170,7 @@ def all_reduce_kernel(
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_local, stride_cn_local
             )
-
+            
             # Load data from the local partial result
             data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask)
 
@@ -252,7 +252,6 @@ def all_scatter_kernel(
             M_local, N_local
         )
 
-
         # Calculate the number of sub-tiles in each dimension
         num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, SCATTER_TILE_M)
         num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, SCATTER_TILE_N)
@@ -286,7 +285,6 @@ def all_scatter_kernel(
                 BLOCK_SIZE_M, BLOCK_SIZE_N,
                 stride_cm_global, stride_cn_global
             )
-
             # Store data to the global result using relaxed atomics
             for remote_rank in range(world_size):
                 iris.put(
@@ -297,7 +295,6 @@ def all_scatter_kernel(
                     heap_bases,
                     mask=sub_mask
                 )
-
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
             tl.atomic_max(end_timestamp_ptr + tile, timestamp)

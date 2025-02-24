@@ -145,7 +145,7 @@ class matmul(torch.autograd.Function):
             mm_end_timestamp_ptr=mm_end_timestamp,
         )
 
-        if matmul._debug:
+        if matmul._debug and not is_triton_interpret_set():
             matmul.streamk_registers = kk.n_regs
             matmul.streamk_spills = kk.n_spills
             print(f"{kk.n_regs} registers used, {kk.n_spills} spills")
