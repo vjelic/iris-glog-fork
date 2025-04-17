@@ -124,6 +124,7 @@ def main():
     dist.barrier()
 
     if rank == 0:
+        json_writer.add_field("algorithm", "torch_dist_all_reduce")
         json_writer.flush()
         json_writer.display()
 

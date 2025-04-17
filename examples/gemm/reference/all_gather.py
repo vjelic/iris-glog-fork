@@ -130,6 +130,7 @@ def main():
     dist.barrier()
     
     if rank == 0:
+        json_writer.add_field("algorithm", "torch_dist_all_gather")
         json_writer.flush()
         json_writer.display()
             
