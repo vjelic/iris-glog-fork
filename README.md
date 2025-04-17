@@ -56,7 +56,7 @@ shmem.barrier()
 ## Examples
 
 1. [P2P](./examples/p2p/README.md)
-2. [Stream-K + Iris](./examples/stream-k/README.md)
+2. [GEMM + Iris](./examples/gemm/README.md)
 
 
 ## Installation
