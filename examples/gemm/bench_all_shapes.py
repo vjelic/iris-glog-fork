@@ -15,8 +15,13 @@ def launch_sbatch(
     algorithm,
     total_sms,
     streamk_sms,
+    blk_m,
+    blk_n,
+    blk_k,
+    gsize_m,
     comm_tile_m,
     comm_tile_n,
+    comm_block,
     hash,
     sbatch_script_content,
     dry_run=False,
@@ -50,9 +55,14 @@ def launch_sbatch(
         exclude_list=config["exclude_list"],
         total_sms=total_sms,
         streamk_sms=streamk_sms,
+        blk_m=blk_m,
+        blk_n=blk_n,
+        blk_k=blk_k,
+        gsize_m=gsize_m,        
         hash=hash,
         COMMUNICATION_TILE_M=comm_tile_m,
         COMMUNICATION_TILE_N=comm_tile_n,
+        comm_block=comm_block,
         output_json_file=output_json,
         output_log_file=output_log,
     )
@@ -92,18 +102,33 @@ def launch_sbatch(
         print(f"Error message: {e.stderr}")
 
 
-def main(hashes, config, sbatch_script_content, input_json, dry_run):
+def main(hashes, config, sbatch_script_content, input_json, tiling_json, dry_run):
     algorithms = ["all_reduce", "all_scatter", "one_shot"]
 
     with open(input_json, "r") as file:
         data = json.load(file)
 
+    with open(tiling_json, "r") as file:
+        tiling_data = json.load(file)
+
+
     unique_mkn = list(set((entry["m"], entry["k"], entry["n"]) for entry in data))
+        
+    optional_keys = ["BLK_M", "BLK_N", "BLK_K", "gsize_m"]
+    mkn_gemm_tiles = {}
+
+    for entry in tiling_data:
+        mkn = (entry["m"], entry["k"], entry["n"])
+        if mkn not in mkn_gemm_tiles:
+            mkn_gemm_tiles[mkn] = {
+                key: entry[key] for key in optional_keys if key in entry
+            }
+            
     if config["partition"] != None:
         if "mi300" in config["partition"]:
             print("Running on MI300")
             total_sms = 304
-            streamk_sms = 256
+            streamk_sms = 272
         elif "mi250" in config["partition"]:
             print("Running on MI250")
             total_sms = 104
@@ -111,19 +136,23 @@ def main(hashes, config, sbatch_script_content, input_json, dry_run):
     else:
         print("Assuming MI300")
         total_sms = 304
-        streamk_sms = 256
+        streamk_sms = 272
 
     enable_algorithms = False
     enable_streamk_sms = False
-    enable_mkn = True
-    enable_communication_tile = False
+    enable_mkn = False
+    
+    # 
+    enable_communication_tile = True
+    enable_communication_block = True
 
     algorithms_iter = algorithms if enable_algorithms else ["all_scatter"]
     streamk_sms_iter = [32, 64, 128, 256, 302, 304] if enable_streamk_sms else [streamk_sms]
-    unique_mkn_iter = list(enumerate(unique_mkn)) if enable_mkn else [(0, (4096, 11008, 65536))]
+    unique_mkn_iter = list(enumerate(unique_mkn)) if enable_mkn else [(0, (8192, 36864, 4608))]
 
     communication_tile_m = [32, 64, 128, 256] if enable_communication_tile else [128]
     communication_tile_n = [32, 64, 128, 256] if enable_communication_tile else [128]
+    communication_block = [32, 64, 128, 256] if enable_communication_block else [256]
 
 
     for hash in hashes:
@@ -132,27 +161,59 @@ def main(hashes, config, sbatch_script_content, input_json, dry_run):
                 for i, (m, k, n) in unique_mkn_iter:
                     for comm_tile_m in communication_tile_m:
                         for comm_tile_n in communication_tile_n:
-                            max_gpus = 8
-                            min_gpus = 1
-                            num_gpus = min_gpus
-                            print(f"Index: {i} / {len(unique_mkn)}, m: {m}, k: {k}, n: {n}")
-                            while num_gpus <= max_gpus:
-                                launch_sbatch(
-                                    config,
-                                    m,
-                                    k,
-                                    n,
-                                    num_gpus,
-                                    algorithm,
-                                    total_sms,
-                                    streamk_sms,
-                                    comm_tile_m,
-                                    comm_tile_n,
-                                    hash,
-                                    sbatch_script_content,
-                                    dry_run=dry_run
-                                )
-                                num_gpus *= 2
+                            for comm_block in communication_block:
+                                max_gpus = 8
+                                min_gpus = 8
+                                num_gpus = min_gpus
+                                print(f"Index: {i} / {len(unique_mkn)}, m: {m}, k: {k}, n: {n}")
+                                while num_gpus <= max_gpus:
+                                    # Figure out the magic tile sizes
+                                    key = None
+                                    if algorithm in ("all_reduce", "one_shot"):
+                                        key = (m, k // num_gpus, n)
+                                    elif algorithm == "all_scatter":
+                                        key = (m, k, n // num_gpus)
+
+                                    # Check for missing entry
+                                    if key not in mkn_gemm_tiles:
+                                        print(f"[WARNING] GEMM params not found for {algorithm} with key={key}, using default.")
+
+                                    # Now safely get the params
+                                    gemm_params = mkn_gemm_tiles.get(key, {
+                                        "BLK_M": 256,
+                                        "BLK_N": 256,
+                                        "BLK_K": 32,
+                                        "gsize_m": 8
+                                    })
+
+                                    # Extract values
+                                    blk_m = gemm_params.get("BLK_M")  
+                                    blk_n = gemm_params.get("BLK_N")
+                                    blk_k = gemm_params.get("BLK_K")
+                                    gsize_m = gemm_params.get("gsize_m")
+                                                        
+                                    
+                                    launch_sbatch(
+                                        config,
+                                        m,
+                                        k,
+                                        n,
+                                        num_gpus,
+                                        algorithm,
+                                        total_sms,
+                                        streamk_sms,
+                                        blk_m,
+                                        blk_n,
+                                        blk_k,
+                                        gsize_m,                                    
+                                        comm_tile_m,
+                                        comm_tile_n,
+                                        comm_block,
+                                        hash,
+                                        sbatch_script_content,
+                                        dry_run=dry_run
+                                    )
+                                    num_gpus *= 2
 
 
 if __name__ == "__main__":
@@ -170,7 +231,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_json", type=str, required=True, help="Path to input JSON file"
     )    
-
+    parser.add_argument(
+        "--tiling_json", type=str, required=True, help="Path to input JSON file"
+    )    
     parser.add_argument(
         "--dry_run", "-n", action="store_true", help="dry_run run (do not execute any commands)"
     )
@@ -208,8 +271,16 @@ output_json_file={output_json_file}
 output_log_file={output_log_file}
 total_sms={total_sms}
 streamk_sms={streamk_sms}
+blk_m={blk_m}
+blk_n={blk_n}
+blk_k={blk_k}
+gsize_m={gsize_m}
+num_stages=2
+datatype=fp16
+num_warps=8
 COMMUNICATION_TILE_M={COMMUNICATION_TILE_M}
 COMMUNICATION_TILE_N={COMMUNICATION_TILE_N}
+comm_block={comm_block}
 hash={hash}
 echo "source /opt/conda/bin/activate py_3.10 &&\
     if [ \"${{hash}}\" != \"latest\" ]; then \
@@ -221,13 +292,21 @@ echo "source /opt/conda/bin/activate py_3.10 &&\
             -m ${{m}} -n ${{n}} -k ${{k}}\
                 --total_sms ${{total_sms}}\
                 --streamk_sms ${{streamk_sms}}\
+                --BLK_M ${{blk_m}}\
+                --BLK_N ${{blk_n}}\
+                --BLK_K ${{blk_k}}\
+                --gsize_m ${{gsize_m}}\
                 --validate --benchmark --debug\
                 --heap_size 8589934592\
                 --output_file ${{output_json_file}}\
                 --COMMUNICATION_TILE_M ${{COMMUNICATION_TILE_M}}\
                 --COMMUNICATION_TILE_N ${{COMMUNICATION_TILE_N}}\
+                --communication_block_size ${{comm_block}}\
+                --num_stages ${{num_stages}}\
+                --num_warps ${{num_warps}}\
+                --datatype ${{datatype}}
         &> $output_log_file" \
     | apptainer exec --cleanenv ${{image_path}} bash
     """
 
-    main(commit_hashes, config, sbatch_script_content, args.input_json, args.dry_run)
+    main(commit_hashes, config, sbatch_script_content, args.input_json, args.tiling_json, args.dry_run)

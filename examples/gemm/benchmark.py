@@ -148,6 +148,7 @@ def main():
         local_A = A
     elif args["algorithm"] == "all_reduce" or args["algorithm"] == "one_shot":
         rows_per_gpu = args["k"] // world_size
+        args["k"] = rows_per_gpu
         start_row = rank * rows_per_gpu
         end_row = start_row + rows_per_gpu
         local_B = B[start_row:end_row, :]
@@ -276,98 +277,99 @@ def main():
 
         with torch.cuda.stream(comm_stream):
             kernel_timing["communication"]["start_event"].record()
-            if args["algorithm"] == "all_scatter":
-                ss = all_scatter_kernel[comm_grid](
-                    local_C,
-                    global_C,
-                    tile_completed,
-                    args["m"],
-                    args["n"],
-                    local_C.stride(0),
-                    local_C.stride(1),
-                    C.stride(0),
-                    C.stride(1),
-                    args["BLK_M"],
-                    args["BLK_N"],
-                    args["gsize_m"],
-                    total_tiles,
-                    args["communication_block_size"],
-                    communication_sms,
-                    shmem.get_heap_bases(),
-                    rank,
-                    world_size,
-                    args["COMMUNICATION_TILE_M"],
-                    args["COMMUNICATION_TILE_N"],
-                    args["trace_tiles"],
-                    timestamps.comm_begin_timestamp,
-                    timestamps.comm_middle_min_timestamp,
-                    timestamps.comm_middle_max_timestamp,
-                    timestamps.comm_end_timestamp,
-                )
-            elif args["algorithm"] == "all_reduce":
-                ss = all_reduce_kernel[comm_grid](
-                    local_C,
-                    global_C,
-                    tile_completed,
-                    args["m"],
-                    args["n"],
-                    local_C.stride(0),
-                    local_C.stride(1),
-                    C.stride(0),
-                    C.stride(1),
-                    args["BLK_M"],
-                    args["BLK_N"],
-                    args["gsize_m"],
-                    total_tiles,
-                    args["communication_block_size"],
-                    communication_sms,
-                    shmem.get_heap_bases(),
-                    rank,
-                    world_size,
-                    args["COMMUNICATION_TILE_M"],
-                    args["COMMUNICATION_TILE_N"],
-                    args["trace_tiles"],
-                    timestamps.comm_begin_timestamp,
-                    timestamps.comm_middle_min_timestamp,
-                    timestamps.comm_middle_max_timestamp,
-                    timestamps.comm_end_timestamp,
-                )
-            elif args["algorithm"] == "one_shot":
-                ss = one_shot_kernel[comm_grid](
-                    local_C,
-                    global_C,
-                    tile_completed,
-                    args["m"],
-                    args["n"],
-                    local_C.stride(0),
-                    local_C.stride(1),
-                    C.stride(0),
-                    C.stride(1),
-                    args["BLK_M"],
-                    args["BLK_N"],
-                    args["gsize_m"],
-                    total_tiles,
-                    args["communication_block_size"],
-                    communication_sms,
-                    shmem.get_heap_bases(),
-                    rank,
-                    world_size,
-                    args["COMMUNICATION_TILE_M"],
-                    args["COMMUNICATION_TILE_N"],
-                    args["trace_tiles"],
-                    timestamps.comm_begin_timestamp,
-                    timestamps.comm_middle_min_timestamp,
-                    timestamps.comm_middle_max_timestamp,
-                    timestamps.comm_end_timestamp,
-                )
+            if world_size >= 1:
+                if args["algorithm"] == "all_scatter":
+                    ss = all_scatter_kernel[comm_grid](
+                        local_C,
+                        global_C,
+                        tile_completed,
+                        args["m"],
+                        args["n"],
+                        local_C.stride(0),
+                        local_C.stride(1),
+                        C.stride(0),
+                        C.stride(1),
+                        args["BLK_M"],
+                        args["BLK_N"],
+                        args["gsize_m"],
+                        total_tiles,
+                        args["communication_block_size"],
+                        communication_sms,
+                        shmem.get_heap_bases(),
+                        rank,
+                        world_size,
+                        args["COMMUNICATION_TILE_M"],
+                        args["COMMUNICATION_TILE_N"],
+                        args["trace_tiles"],
+                        timestamps.comm_begin_timestamp,
+                        timestamps.comm_middle_min_timestamp,
+                        timestamps.comm_middle_max_timestamp,
+                        timestamps.comm_end_timestamp,
+                    )
+                elif args["algorithm"] == "all_reduce":
+                    ss = all_reduce_kernel[comm_grid](
+                        local_C,
+                        global_C,
+                        tile_completed,
+                        args["m"],
+                        args["n"],
+                        local_C.stride(0),
+                        local_C.stride(1),
+                        C.stride(0),
+                        C.stride(1),
+                        args["BLK_M"],
+                        args["BLK_N"],
+                        args["gsize_m"],
+                        total_tiles,
+                        args["communication_block_size"],
+                        communication_sms,
+                        shmem.get_heap_bases(),
+                        rank,
+                        world_size,
+                        args["COMMUNICATION_TILE_M"],
+                        args["COMMUNICATION_TILE_N"],
+                        args["trace_tiles"],
+                        timestamps.comm_begin_timestamp,
+                        timestamps.comm_middle_min_timestamp,
+                        timestamps.comm_middle_max_timestamp,
+                        timestamps.comm_end_timestamp,
+                    )
+                elif args["algorithm"] == "one_shot":
+                    ss = one_shot_kernel[comm_grid](
+                        local_C,
+                        global_C,
+                        tile_completed,
+                        args["m"],
+                        args["n"],
+                        local_C.stride(0),
+                        local_C.stride(1),
+                        C.stride(0),
+                        C.stride(1),
+                        args["BLK_M"],
+                        args["BLK_N"],
+                        args["gsize_m"],
+                        total_tiles,
+                        args["communication_block_size"],
+                        communication_sms,
+                        shmem.get_heap_bases(),
+                        rank,
+                        world_size,
+                        args["COMMUNICATION_TILE_M"],
+                        args["COMMUNICATION_TILE_N"],
+                        args["trace_tiles"],
+                        timestamps.comm_begin_timestamp,
+                        timestamps.comm_middle_min_timestamp,
+                        timestamps.comm_middle_max_timestamp,
+                        timestamps.comm_end_timestamp,
+                    )
+                if not is_triton_interpret_set():
+                    comm_registers = ss.n_regs
+                    comm_spills = ss.n_spills
+                    shmem.log_debug(
+                        f"Communication kernel: {ss.n_regs} registers used, {ss.n_spills} spills"
+                    )
             kernel_timing["communication"]["end_event"].record()
             kernel_timing["communication"]["experiments"] += 1
-            if not is_triton_interpret_set():
-                comm_registers = ss.n_regs
-                comm_spills = ss.n_spills
-                shmem.log_debug(
-                    f"Communication kernel: {ss.n_regs} registers used, {ss.n_spills} spills"
-                )
 
         torch.cuda.nvtx.range_pop()
         shmem.barrier()
