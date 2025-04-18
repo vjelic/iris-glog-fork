@@ -90,13 +90,65 @@ def main():
     for key, value in args.items():
         json_writer.add_field(key, value)
         
+
+    kernel_timing = {
+        "gemm": {
+            "start_event": torch.cuda.Event(enable_timing=True),
+            "end_event": torch.cuda.Event(enable_timing=True),
+            "ms": 0,
+            "experiments": 0,
+        },
+        "communication": {
+            "start_event": torch.cuda.Event(enable_timing=True),
+            "end_event": torch.cuda.Event(enable_timing=True),
+            "ms": 0,
+            "experiments": 0,
+        },
+    }
+
+    gemm_stream = torch.cuda.Stream()
+    comm_stream = torch.cuda.Stream()
+            
     def run_experiment():
         global C_partial
-        C_partial = A_local @ B_local
-        dist.all_reduce(C_partial, op=dist.ReduceOp.SUM)
+        nonlocal kernel_timing
+        
+        torch.cuda.nvtx.range_push(f"GEMM + Communication")
+        torch.cuda.nvtx.range_push(f"GEMM")
+                
+        with torch.cuda.stream(gemm_stream):
+            kernel_timing["gemm"]["start_event"].record()        
+            C_partial = A_local @ B_local
+            kernel_timing["gemm"]["end_event"].record()
+            kernel_timing["gemm"]["experiments"] += 1
+
+        gemm_stream.synchronize()
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push(f"Communication")
+                            
+        with torch.cuda.stream(comm_stream):    
+            kernel_timing["communication"]["start_event"].record()                         
+            dist.all_reduce(C_partial, op=dist.ReduceOp.SUM)
+            kernel_timing["communication"]["end_event"].record()
+            kernel_timing["communication"]["experiments"] += 1
+        comm_stream.synchronize()
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_pop()            
+
+        for k in ["gemm", "communication"]:
+            ms = kernel_timing[k]["start_event"].elapsed_time(
+                kernel_timing[k]["end_event"]
+            )
+            kernel_timing[k]["ms"] += ms
+
+        
 
     run_experiment()
 
+    for k in ["gemm", "communication"]:
+        kernel_timing[k]["ms"] = 0
+        kernel_timing[k]["experiments"] = 0
+        
     C_global.copy_(C_partial)
 
     # Validation step
@@ -120,6 +172,13 @@ def main():
         print(f"Rank {rank}: {ms:.3f} ms  {perf(ms):.3f} tflops")
         json_writer.add_field("ms", ms)
         json_writer.add_field("flops", flops)
+
+        for k in ["gemm", "communication"]:
+            json_writer.add_field(
+                k + "_ms", kernel_timing[k]["ms"] / kernel_timing[k]["experiments"]
+            )
+            json_writer.add_field(k + "_experiments", kernel_timing[k]["experiments"])
+                
 
     dist.barrier()
 

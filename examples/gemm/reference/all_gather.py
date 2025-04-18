@@ -96,15 +96,65 @@ def main():
     # Allocate tensor for gathered results
     C_global = torch.empty(m, n, device=f"cuda:{rank}")
 
+    kernel_timing = {
+        "gemm": {
+            "start_event": torch.cuda.Event(enable_timing=True),
+            "end_event": torch.cuda.Event(enable_timing=True),
+            "ms": 0,
+            "experiments": 0,
+        },
+        "communication": {
+            "start_event": torch.cuda.Event(enable_timing=True),
+            "end_event": torch.cuda.Event(enable_timing=True),
+            "ms": 0,
+            "experiments": 0,
+        },
+    }
+
+    gemm_stream = torch.cuda.Stream()
+    comm_stream = torch.cuda.Stream()
+    
     def run_experiment():
-        C_partial = A_full @ B_local
-        gathered_parts = [
-            C_global[:, i * cols_per_gpu : (i + 1) * cols_per_gpu]
-            for i in range(world_size)
-        ]
-        dist.all_gather(gathered_parts, C_partial)
+        nonlocal kernel_timing
+        
+        torch.cuda.nvtx.range_push(f"GEMM + Communication")
+        torch.cuda.nvtx.range_push(f"GEMM")
+                
+        with torch.cuda.stream(gemm_stream):
+            kernel_timing["gemm"]["start_event"].record()
+            C_partial = A_full @ B_local
+            kernel_timing["gemm"]["end_event"].record()
+            kernel_timing["gemm"]["experiments"] += 1   
+        
+        gemm_stream.synchronize()
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push(f"Communication")
+                      
+        with torch.cuda.stream(comm_stream):    
+            kernel_timing["communication"]["start_event"].record()                         
+            gathered_parts = [
+                C_global[:, i * cols_per_gpu : (i + 1) * cols_per_gpu]
+                for i in range(world_size)
+            ]
+            dist.all_gather(gathered_parts, C_partial)
+            kernel_timing["communication"]["end_event"].record()
+            kernel_timing["communication"]["experiments"] += 1
+        comm_stream.synchronize()
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_pop()            
+
+        for k in ["gemm", "communication"]:
+            ms = kernel_timing[k]["start_event"].elapsed_time(
+                kernel_timing[k]["end_event"]
+            )
+            kernel_timing[k]["ms"] += ms
+
 
     run_experiment()
+
+    for k in ["gemm", "communication"]:
+        kernel_timing[k]["ms"] = 0
+        kernel_timing[k]["experiments"] = 0
 
     # Validation
     if validate:
@@ -126,6 +176,13 @@ def main():
         print(f"Rank {rank}: {ms:.3f} ms  {perf(ms):.3f} tflops")
         json_writer.add_field("ms", ms)
         json_writer.add_field("flops", flops)
+
+        for k in ["gemm", "communication"]:
+            json_writer.add_field(
+                k + "_ms", kernel_timing[k]["ms"] / kernel_timing[k]["experiments"]
+            )
+            json_writer.add_field(k + "_experiments", kernel_timing[k]["experiments"])
+        
 
     dist.barrier()
     
