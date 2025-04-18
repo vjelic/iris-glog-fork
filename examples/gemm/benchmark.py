@@ -173,7 +173,7 @@ def main():
         )
         exit(1)
 
-    communication_sms = args["total_sms"] - args["streamk_sms"]
+    communication_sms = (args["total_sms"] - args["streamk_sms"])*3
 
     communication_num_threads = args["communication_block_size"] * communication_sms
     comm_grid = lambda meta: (

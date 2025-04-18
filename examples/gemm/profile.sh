@@ -1,21 +1,21 @@
 #!/bin/bash
 
 num_gpus=8
-algorithm=all_scatter
+algorithm=one_shot
 m=8192
 n=4608
 k=36864
 total_sms=304
-streamk_sms=272
+streamk_sms=256
 blk_m=256
-blk_n=64
+blk_n=256
 blk_k=64
-gsize_m=1
+gsize_m=6
 COMMUNICATION_TILE_M=128
-COMMUNICATION_TILE_N=128
+COMMUNICATION_TILE_N=64
 num_stages=2
 num_warps=8
-communication_block_size=128
+communication_block_size=256
 datatype="fp16"
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
@@ -33,7 +33,7 @@ rocprof_output="${output_base}-%pid%"
 echo "JSON Output: ${output_json_file}"
 echo "Rocprof Output Prefix: ${rocprof_output}"
 
-profiler_enabled=true 
+profiler_enabled=false 
 
 python_cmd="python benchmark.py \
     --algorithm ${algorithm} \

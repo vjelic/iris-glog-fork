@@ -274,7 +274,7 @@ def all_scatter_kernel(
             )
 
             # Load data from the local partial result
-            data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask)
+            data = tl.load(local_C_partial_ptr + sub_offset, mask=sub_mask, cache_modifier=".cv")
 
             # Translate to global
             sub_mask, global_offset = extract_submask_and_offset(
@@ -371,6 +371,7 @@ def one_shot_kernel(
         # better at handling flat loops instead of nested loops
         for sub_tile_idx in range(0, total_sub_tiles):
             acc = tl.zeros((REDUCTION_TILE_M, REDUCTION_TILE_N), dtype=tl.float32)
+            acc2 = tl.zeros((REDUCTION_TILE_M, REDUCTION_TILE_N), dtype=tl.float32)
 
             # Calculate start_row and start_col for the current sub-tile
             start_row = (sub_tile_idx // num_sub_tiles_n) * REDUCTION_TILE_M
@@ -386,12 +387,14 @@ def one_shot_kernel(
             )
 
             # For all the ranks, load and accumulate
-            for remote_rank in range(world_size):
-                # Load data from the remote partial result
+            for remote_rank in range(0, world_size, 2):
                 acc += iris.get(partial_c + sub_offset, cur_rank, remote_rank, heap_bases, mask=sub_mask)
+                acc2 += iris.get(partial_c + sub_offset, cur_rank, remote_rank + 1, heap_bases, mask=sub_mask)
 
+            acc += acc2
+            
             # Sub-tile completed, store the output as a sub-tile to c
-            tl.store(c + sub_offset, acc, mask=sub_mask)
+            tl.store(c + sub_offset, acc, mask=sub_mask, cache_modifier=".wt")
 
             if COLLECT_TIMESTAMPS:
                 timestamp = read_realtime()
