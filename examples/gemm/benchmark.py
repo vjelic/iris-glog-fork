@@ -87,7 +87,7 @@ def parse_args():
     parser.add_argument("--kpack", type=int, default=2, help="K packing size")
     parser.add_argument("--heap_size", type=int, default=1 << 33, help="Iris heap size")
     parser.add_argument(
-        "--streamk_sms", type=int, default=256, help="Number of SMs for Stream-K"
+        "--gemm_sms", type=int, default=256, help="Number of SMs for Stream-K"
     )
     parser.add_argument(
         "--total_sms", type=int, default=304, help="Total number of SMs"
@@ -167,23 +167,23 @@ def main():
     total_blocks_N = triton.cdiv(args["n"], args["BLK_N"])
     total_tiles = total_blocks_M * total_blocks_N
 
-    if args["streamk_sms"] >= args["total_sms"]:
+    if args["gemm_sms"] >= args["total_sms"]:
         print(
-            f"Invalid number of stream-K SMs. {args['streamk_sms']} >= {args['total_sms']}"
+            f"Invalid number of stream-K SMs. {args['gemm_sms']} >= {args['total_sms']}"
         )
         exit(1)
 
-    communication_sms = (args["total_sms"] - args["streamk_sms"])*3
+    communication_sms = (args["total_sms"] - args["gemm_sms"]) * 3
 
     communication_num_threads = args["communication_block_size"] * communication_sms
     comm_grid = lambda meta: (
         triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),
     )
 
-    locks = shmem.zeros((args["streamk_sms"],), device="cuda", dtype=torch.int32)
+    locks = shmem.zeros((args["gemm_sms"],), device="cuda", dtype=torch.int32)
     tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
     P = shmem.zeros(
-        (args["streamk_sms"], args["BLK_M"] * args["BLK_N"]),
+        (args["gemm_sms"], args["BLK_M"] * args["BLK_N"]),
         device="cuda",
         dtype=torch.float32,
     )
@@ -193,13 +193,13 @@ def main():
     comm_stream = torch.cuda.Stream()
 
     json_writer.add_field("communication_sms", communication_sms)
-    json_writer.add_field("streamk_sms", args["streamk_sms"])
+    json_writer.add_field("gemm_sms", args["gemm_sms"])
 
     comm_registers = 0
     comm_spills = 0
 
     kernel_timing = {
-        "streamk": {
+        "gemm": {
             "start_event": torch.cuda.Event(enable_timing=True),
             "end_event": torch.cuda.Event(enable_timing=True),
             "ms": 0,
@@ -230,18 +230,17 @@ def main():
         nonlocal comm_registers
         nonlocal comm_spills
         nonlocal kernel_timing
-        
+
         shmem.barrier()
-        
+
         if args["trace_tiles"]:
             timestamps.reset()
             shmem.barrier()
-            
 
         torch.cuda.nvtx.range_push(f"GEMM + Communication")
         torch.cuda.nvtx.range_push(f"GEMM")
         with torch.cuda.stream(gemm_stream):
-            kernel_timing["streamk"]["start_event"].record()
+            kernel_timing["gemm"]["start_event"].record()
             local_C = matmul.apply(
                 local_A,
                 local_B,
@@ -252,7 +251,7 @@ def main():
                 tile_completed,
                 rank,
                 world_size,
-                args["streamk_sms"],
+                args["gemm_sms"],
                 args["BLK_M"],
                 args["BLK_N"],
                 args["BLK_K"],
@@ -269,8 +268,8 @@ def main():
                 timestamps.mm_begin_timestamp,
                 timestamps.mm_end_timestamp,
             )
-            kernel_timing["streamk"]["end_event"].record()
-            kernel_timing["streamk"]["experiments"] += 1
+            kernel_timing["gemm"]["end_event"].record()
+            kernel_timing["gemm"]["experiments"] += 1
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push(f"Communication")
@@ -374,7 +373,7 @@ def main():
         torch.cuda.nvtx.range_pop()
         shmem.barrier()
 
-        for k in ["streamk", "communication"]:
+        for k in ["gemm", "communication"]:
             ms = kernel_timing[k]["start_event"].elapsed_time(
                 kernel_timing[k]["end_event"]
             )
@@ -384,22 +383,22 @@ def main():
 
     # Synchronize across all GPUs
     shmem.barrier()
-    
-    # Warmup    
+
+    # Warmup
     run_experiment()
 
-    for k in ["streamk", "communication"]:
+    for k in ["gemm", "communication"]:
         kernel_timing[k]["ms"] = 0
         kernel_timing[k]["experiments"] = 0
 
     if not is_triton_interpret_set():
-        streamk_registers = matmul.streamk_registers
-        streamk_spills = matmul.streamk_spills
+        gemm_registers = matmul.streamk_registers
+        gemm_spills = matmul.streamk_spills
 
         json_writer.add_field("comm_registers", comm_registers)
         json_writer.add_field("comm_spills", comm_spills)
-        json_writer.add_field("streamk_registers", streamk_registers)
-        json_writer.add_field("streamk_spills", streamk_spills)
+        json_writer.add_field("gemm_registers", gemm_registers)
+        json_writer.add_field("gemm_spills", gemm_spills)
 
     if args["validate"]:
         matmul.set_debug(False)
@@ -431,7 +430,7 @@ def main():
         json_writer.add_field("triton_tflops", triton_tflops)
         json_writer.add_field("triton_ms", triton_ms)
 
-        for k in ["streamk", "communication"]:
+        for k in ["gemm", "communication"]:
             json_writer.add_field(
                 k + "_ms", kernel_timing[k]["ms"] / kernel_timing[k]["experiments"]
             )
