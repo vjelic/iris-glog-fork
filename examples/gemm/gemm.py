@@ -4,8 +4,10 @@ from utils import *
 
 import sys
 import os
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 import iris
+
 
 @triton.jit()
 def persistent_gemm(
@@ -42,7 +44,7 @@ def persistent_gemm(
     COLLECT_TIMESTAMPS: tl.constexpr = False,
     mm_begin_timestamp_ptr: tl.tensor = None,
     mm_end_timestamp_ptr: tl.tensor = None,
-    COMMUNICATION_ALGORITHM: tl.constexpr = ALL_SCATTER
+    COMMUNICATION_ALGORITHM: tl.constexpr = ALL_SCATTER,
 ):
     pid = tl.program_id(0)
 
@@ -123,10 +125,24 @@ def persistent_gemm(
         if COMMUNICATION_ALGORITHM == ONE_SHOT:
             for remote in range(world_size):
                 iris.atomic_add(
-                    tile_completed + tile_id, 1, rank, remote, heap_bases_ptr,
-                    sem="release", scope="sys"
+                    tile_completed + tile_id,
+                    1,
+                    rank,
+                    remote,
+                    heap_bases_ptr,
+                    sem="release",
+                    scope="sys",
                 )
-        elif COMMUNICATION_ALGORITHM == ALL_SCATTER or COMMUNICATION_ALGORITHM == ALL_REDUCE:
+        elif COMMUNICATION_ALGORITHM == ONE_SHOT_V1:
+            compare = 0
+            value = 1
+            tl.atomic_cas(
+                tile_completed + tile_id, compare, value, sem="release", scope="sys"
+            )
+        elif (
+            COMMUNICATION_ALGORITHM == ALL_SCATTER
+            or COMMUNICATION_ALGORITHM == ALL_REDUCE
+        ):
             compare = 0
             value = 1
             tl.atomic_cas(

@@ -9,7 +9,12 @@ from utils import *
 
 import iris
 
-from communication import all_scatter_kernel, one_shot_kernel, all_reduce_kernel
+from communication import (
+    all_scatter_kernel,
+    one_shot_kernel,
+    all_reduce_kernel,
+    one_shot_v1_kernel,
+)
 from matmul_wrapper import matmul
 from validation import validate_gemm
 
@@ -50,7 +55,7 @@ def parse_args():
         "--algorithm",
         type=str,
         default="all_reduce",
-        choices=["all_reduce", "all_scatter", "one_shot"],
+        choices=["all_reduce", "all_scatter", "one_shot", "one_shot_v1"],
         help="Datatype of computation",
     )
     parser.add_argument(
@@ -151,7 +156,11 @@ def main():
         args["n"] = args["n"] // world_size
         local_B = B[:, rank * args["n"] : (rank + 1) * args["n"]].clone()
         local_A = A
-    elif args["algorithm"] == "all_reduce" or args["algorithm"] == "one_shot":
+    elif (
+        args["algorithm"] == "all_reduce"
+        or args["algorithm"] == "one_shot"
+        or args["algorithm"] == "one_shot_v1"
+    ):
         rows_per_gpu = args["k"] // world_size
         args["k"] = rows_per_gpu
         start_row = rank * rows_per_gpu
@@ -188,6 +197,8 @@ def main():
     )
 
     locks = shmem.zeros((args["gemm_sms"],), device="cuda", dtype=torch.int32)
+
+    # In the one-shot_v1 kernel, we do pairwise commination between producer and consumer.
     tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
     P = shmem.zeros(
         (args["gemm_sms"], args["BLK_M"] * args["BLK_N"]),
@@ -222,6 +233,8 @@ def main():
 
     COMMUNICATION_ALGORITHM = NONE
     if args["algorithm"] == "one_shot":
+        COMMUNICATION_ALGORITHM = ONE_SHOT
+    if args["algorithm"] == "one_shot_v1":
         COMMUNICATION_ALGORITHM = ONE_SHOT
     elif args["algorithm"] == "all_reduce":
         COMMUNICATION_ALGORITHM = ALL_REDUCE
@@ -314,6 +327,34 @@ def main():
                     )
                 elif args["algorithm"] == "all_reduce":
                     ss = all_reduce_kernel[comm_grid](
+                        local_C,
+                        global_C,
+                        tile_completed,
+                        args["m"],
+                        args["n"],
+                        local_C.stride(0),
+                        local_C.stride(1),
+                        C.stride(0),
+                        C.stride(1),
+                        args["BLK_M"],
+                        args["BLK_N"],
+                        args["gsize_m"],
+                        total_tiles,
+                        args["communication_block_size"],
+                        communication_sms,
+                        shmem.get_heap_bases(),
+                        rank,
+                        world_size,
+                        args["COMMUNICATION_TILE_M"],
+                        args["COMMUNICATION_TILE_N"],
+                        args["trace_tiles"],
+                        timestamps.comm_begin_timestamp,
+                        timestamps.comm_middle_min_timestamp,
+                        timestamps.comm_middle_max_timestamp,
+                        timestamps.comm_end_timestamp,
+                    )
+                elif args["algorithm"] == "one_shot_v1":
+                    ss = one_shot_v1_kernel[comm_grid](
                         local_C,
                         global_C,
                         tile_completed,

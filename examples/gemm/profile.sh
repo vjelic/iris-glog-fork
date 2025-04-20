@@ -1,7 +1,7 @@
 #!/bin/bash
 
 num_gpus=8
-algorithm=one_shot
+algorithm=one_shot_v1
 m=8192
 n=4608
 k=36864
@@ -27,6 +27,7 @@ output_base="${timestamp}/fp16_comm${COMMUNICATION_TILE_M}x${COMMUNICATION_TILE_
 
 # Final outputs
 output_json_file="${output_base}.json"
+output_log_file="${output_base}.log"
 rocprof_output="${output_base}-%pid%"
 
 # Echo for verification
@@ -39,7 +40,7 @@ python_cmd="python benchmark.py \
     --algorithm ${algorithm} \
     -m ${m} -n ${n} -k ${k} \
     --total_sms ${total_sms} \
-    --streamk_sms ${streamk_sms} \
+    --gemm_sms ${streamk_sms} \
     --BLK_M ${blk_m} --BLK_N ${blk_n} \
     --BLK_K ${blk_k} --gsize_m ${gsize_m} \
     --validate --benchmark --debug \
@@ -60,5 +61,5 @@ if [ "$profiler_enabled" = true ]; then
         -- ${python_cmd}
 else
     echo "[INFO] Running without profiler"
-    mpirun --allow-run-as-root -np ${num_gpus} ${python_cmd}
+    mpirun --allow-run-as-root -np ${num_gpus} ${python_cmd}  2>&1 | tee ${output_log_file}
 fi
