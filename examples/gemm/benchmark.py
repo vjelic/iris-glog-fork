@@ -98,7 +98,12 @@ def parse_args():
         default=256,
         help="Communication block size",
     )
-
+    parser.add_argument(
+        "--communication_sms_multiplier",
+        type=int,
+        default=3,
+        help="Communication SMS multiplier",
+    )
     return vars(parser.parse_args())
 
 
@@ -173,7 +178,9 @@ def main():
         )
         exit(1)
 
-    communication_sms = (args["total_sms"] - args["gemm_sms"]) * 3
+    communication_sms = (args["total_sms"] - args["gemm_sms"]) * args[
+        "communication_sms_multiplier"
+    ]
 
     communication_num_threads = args["communication_block_size"] * communication_sms
     comm_grid = lambda meta: (
