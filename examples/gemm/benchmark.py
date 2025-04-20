@@ -197,8 +197,6 @@ def main():
     )
 
     locks = shmem.zeros((args["gemm_sms"],), device="cuda", dtype=torch.int32)
-
-    # In the one-shot_v1 kernel, we do pairwise commination between producer and consumer.
     tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
     P = shmem.zeros(
         (args["gemm_sms"], args["BLK_M"] * args["BLK_N"]),
