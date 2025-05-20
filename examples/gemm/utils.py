@@ -7,11 +7,12 @@ import numpy as np
 import os
 
 # Communication Algorithms
+NONE = tl.constexpr(0)
 ALL_SCATTER = tl.constexpr(1)
 ALL_REDUCE = tl.constexpr(2)
 ONE_SHOT = tl.constexpr(3)
 ONE_SHOT_V1 = tl.constexpr(4)
-NONE = tl.constexpr(5)
+ONE_SHOT_V2 = tl.constexpr(5)
 
 
 class JSONWriter:

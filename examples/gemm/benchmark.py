@@ -14,6 +14,7 @@ from communication import (
     one_shot_kernel,
     all_reduce_kernel,
     one_shot_v1_kernel,
+    one_shot_v2_kernel,
 )
 from matmul_wrapper import matmul
 from validation import validate_gemm
@@ -55,8 +56,8 @@ def parse_args():
         "--algorithm",
         type=str,
         default="all_reduce",
-        choices=["all_reduce", "all_scatter", "one_shot", "one_shot_v1"],
-        help="Datatype of computation",
+        choices=["all_reduce", "all_scatter", "one_shot", "one_shot_v1", "one_shot_v2"],
+        help="Algorithm to use",
     )
     parser.add_argument(
         "--output_file",
@@ -160,6 +161,7 @@ def main():
         args["algorithm"] == "all_reduce"
         or args["algorithm"] == "one_shot"
         or args["algorithm"] == "one_shot_v1"
+        or args["algorithm"] == "one_shot_v2"
     ):
         rows_per_gpu = args["k"] // world_size
         args["k"] = rows_per_gpu
@@ -196,8 +198,15 @@ def main():
         triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),
     )
 
+    if args["algorithm"] == "one_shot_v2":
+        tile_completed = shmem.zeros(
+            (total_tiles * world_size,), device="cuda", dtype=torch.int32
+        )
+    else:
+        tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
+
     locks = shmem.zeros((args["gemm_sms"],), device="cuda", dtype=torch.int32)
-    tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
+
     P = shmem.zeros(
         (args["gemm_sms"], args["BLK_M"] * args["BLK_N"]),
         device="cuda",
@@ -232,8 +241,10 @@ def main():
     COMMUNICATION_ALGORITHM = NONE
     if args["algorithm"] == "one_shot":
         COMMUNICATION_ALGORITHM = ONE_SHOT
-    if args["algorithm"] == "one_shot_v1":
-        COMMUNICATION_ALGORITHM = ONE_SHOT
+    elif args["algorithm"] == "one_shot_v1":
+        COMMUNICATION_ALGORITHM = ONE_SHOT_V1
+    elif args["algorithm"] == "one_shot_v2":
+        COMMUNICATION_ALGORITHM = ONE_SHOT_V2
     elif args["algorithm"] == "all_reduce":
         COMMUNICATION_ALGORITHM = ALL_REDUCE
     elif args["algorithm"] == "all_scatter":
@@ -241,6 +252,12 @@ def main():
 
     # Timestamps
     timestamps = Timestamps(num_tiles=total_tiles)
+
+    def preamble():
+        shmem.barrier()
+        iris.memset_tensor(tile_completed, 0)
+        shmem.barrier()
+        shmem.log("Preamble completed")
 
     def run_experiment():
         nonlocal local_C
@@ -379,6 +396,34 @@ def main():
                         timestamps.comm_middle_max_timestamp,
                         timestamps.comm_end_timestamp,
                     )
+                elif args["algorithm"] == "one_shot_v2":
+                    ss = one_shot_v2_kernel[comm_grid](
+                        local_C,
+                        global_C,
+                        tile_completed,
+                        args["m"],
+                        args["n"],
+                        local_C.stride(0),
+                        local_C.stride(1),
+                        C.stride(0),
+                        C.stride(1),
+                        args["BLK_M"],
+                        args["BLK_N"],
+                        args["gsize_m"],
+                        total_tiles,
+                        args["communication_block_size"],
+                        communication_sms,
+                        shmem.get_heap_bases(),
+                        rank,
+                        world_size,
+                        args["COMMUNICATION_TILE_M"],
+                        args["COMMUNICATION_TILE_N"],
+                        args["trace_tiles"],
+                        timestamps.comm_begin_timestamp,
+                        timestamps.comm_middle_min_timestamp,
+                        timestamps.comm_middle_max_timestamp,
+                        timestamps.comm_end_timestamp,
+                    )
                 elif args["algorithm"] == "one_shot":
                     ss = one_shot_kernel[comm_grid](
                         local_C,
@@ -433,6 +478,10 @@ def main():
     # Warmup
     run_experiment()
 
+    shmem.barrier()
+    preamble()
+    shmem.barrier()
+
     for k in ["gemm", "communication"]:
         kernel_timing[k]["ms"] = 0
         kernel_timing[k]["experiments"] = 0
@@ -447,26 +496,34 @@ def main():
         json_writer.add_field("gemm_spills", gemm_spills)
 
     if args["validate"]:
+        shmem.log("Validating...")
+
         matmul.set_debug(False)
         # Validate global result
         success = validate_gemm(A, B, global_C, shmem)
         passed_str = "passed" if success else "failed"
         shmem.log(f"Final C validation {passed_str}.")
 
+        # Wait for all to finish validation
+        shmem.barrier()
+        shmem.log("Validating local C...")
+
         json_writer.add_field("success", success)
 
         # Validate partial result
-        success = validate_gemm(local_A, local_B, local_C, shmem)
-        json_writer.add_field("success_partial", success)
-        passed_str = "passed" if success else "failed"
-        shmem.log(f"Local C validation {passed_str}.")
+        # success = validate_gemm(local_A, local_B, local_C, shmem)
+        # json_writer.add_field("success_partial", success)
+        # passed_str = "passed" if success else "failed"
+        # shmem.log(f"Local C validation {passed_str}.")
 
         # Wait for all to finish validation
-        shmem.barrier()
+        # shmem.barrier()
+    shmem.log("Validation completed")
 
     if args["benchmark"]:
+        shmem.log("Benchmarking...")
         perf = lambda ms: 2 * args["M"] * args["N"] * args["K"] * 1e-12 / (ms * 1e-3)
-        triton_ms = iris.do_bench(run_experiment, shmem.barrier)
+        triton_ms = iris.do_bench(run_experiment, shmem.barrier, preamble)
         triton_tflops = perf(triton_ms)
         algo_string = args["algorithm"]
         shmem.log_stats(

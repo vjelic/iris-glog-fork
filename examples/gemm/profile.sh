@@ -1,7 +1,7 @@
 #!/bin/bash
 
-num_gpus=8
-algorithm=one_shot_v1
+num_gpus=1
+algorithm=one_shot_v2
 m=8192
 n=4608
 k=36864
@@ -20,21 +20,31 @@ datatype="fp16"
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 
-mkdir -p $timestamp
 
 # Build a descriptive base name
-output_base="${timestamp}/fp16_comm${COMMUNICATION_TILE_M}x${COMMUNICATION_TILE_N}x${communication_block_size}_${m}_${n}_${k}_streamksms${streamk_sms}_blk_m${blk_m}_blk_n${blk_n}_blk_k${blk_k}_gsize_m${gsize_m}"
+# output_base="results/${timestamp}/fp16_comm${COMMUNICATION_TILE_M}x${COMMUNICATION_TILE_N}x${communication_block_size}_${m}_${n}_${k}_streamksms${streamk_sms}_blk_m${blk_m}_blk_n${blk_n}_blk_k${blk_k}_gsize_m${gsize_m}"
+output_base="results/${timestamp}/M${m}_N${n}_K${k}"
+
+mkdir -p $output_base
+
 
 # Final outputs
 output_json_file="${output_base}.json"
+output_cmd_file="${output_base}.cmd"
 output_log_file="${output_base}.log"
+proto_log_file="${output_base}.proto"
 rocprof_output="${output_base}-%pid%"
+rocprof_output="${output_base}"
 
 # Echo for verification
 echo "JSON Output: ${output_json_file}"
 echo "Rocprof Output Prefix: ${rocprof_output}"
 
-profiler_enabled=false 
+profile=false
+benchmark=true
+validate=true
+debug=true
+    # --benchmark --debug \
 
 python_cmd="python benchmark.py \
     --algorithm ${algorithm} \
@@ -43,7 +53,6 @@ python_cmd="python benchmark.py \
     --gemm_sms ${streamk_sms} \
     --BLK_M ${blk_m} --BLK_N ${blk_n} \
     --BLK_K ${blk_k} --gsize_m ${gsize_m} \
-    --validate --benchmark --debug \
     --heap_size 8589934592 \
     --COMMUNICATION_TILE_M ${COMMUNICATION_TILE_M} \
     --COMMUNICATION_TILE_N ${COMMUNICATION_TILE_N} \
@@ -51,15 +60,34 @@ python_cmd="python benchmark.py \
     --num_stages ${num_stages} \
     --num_warps ${num_warps} \
     --datatype ${datatype}\
-    --communication_block_size ${communication_block_size}"
+    --communication_block_size ${communication_block_size}\
+    --benchmark"
 
+if [ "$benchmark" = true ]; then
+    python_cmd="${python_cmd} --benchmark"
+fi
+if [ "$debug" = true ]; then
+    python_cmd="${python_cmd} --debug"
+fi
+if [ "$validate" = true ]; then
+    python_cmd="${python_cmd} --validate"
+fi
+# export ROCPROFSYS_OUTPUT_FILE=$proto_log_file
+# python_cmd="python vector_add.py"
 # Launch
-if [ "$profiler_enabled" = true ]; then
+if [ "$profile" = true ]; then
     echo "[INFO] Running with profiler enabled"
+
     mpirun --allow-run-as-root -np ${num_gpus} /opt/rocprofiler-systems/bin/rocprof-sys-run \
-        --use-roctx -o "${rocprof_output}" \
-        -- ${python_cmd}
+    -T \
+    --perfetto-annotations \
+    --output "${rocprof_output}" \
+    --use-rocm \
+    --rocm-marker-api-operations roctxRangePushA roctxRangePop \
+    -- ${python_cmd}
+
 else
     echo "[INFO] Running without profiler"
+    echo "mpirun --allow-run-as-root -np ${num_gpus} ${python_cmd}  2>&1 | tee ${output_log_file}" > ${output_cmd_file}
     mpirun --allow-run-as-root -np ${num_gpus} ${python_cmd}  2>&1 | tee ${output_log_file}
 fi

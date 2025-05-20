@@ -10,6 +10,7 @@ finegrained_alloc_path = os.path.join(
     current_dir, "finegrained_alloc", "libfinegrained_allocator.so"
 )
 
+
 def compile():
     if os.path.exists(finegrained_alloc_path):
         return
@@ -19,18 +20,31 @@ def compile():
     name = "finegrained_allocator"
     src_file = os.path.join(current_dir, "finegrained_alloc", f"{name}.hip")
 
-    basic_warnings = [
-        "-Wall", "-Wextra", "-Werror"
-    ]
+    basic_warnings = ["-Wall", "-Wextra", "-Werror"]
     strict_warnings = [
-        "-pedantic", "-Wshadow", "-Wnon-virtual-dtor", "-Wold-style-cast",
-        "-Wcast-align", "-Woverloaded-virtual", "-Wconversion",
-        "-Wsign-conversion", "-Wnull-dereference", "-Wdouble-promotion", "-Wformat=2"
+        "-pedantic",
+        "-Wshadow",
+        "-Wnon-virtual-dtor",
+        "-Wold-style-cast",
+        "-Wcast-align",
+        "-Woverloaded-virtual",
+        "-Wconversion",
+        "-Wsign-conversion",
+        "-Wnull-dereference",
+        "-Wdouble-promotion",
+        "-Wformat=2",
     ]
     std_flags = ["-std=c++17"]
     output_flags = ["-shared", "-fPIC", "-o", finegrained_alloc_path]
 
-    cmd = ["hipcc"] + basic_warnings + strict_warnings + std_flags + output_flags + [src_file]
+    cmd = (
+        ["hipcc"]
+        + basic_warnings
+        + strict_warnings
+        + std_flags
+        + output_flags
+        + [src_file]
+    )
 
     try:
         subprocess.run(cmd, cwd=os.path.dirname(src_file), check=True)
@@ -39,8 +53,9 @@ def compile():
         print(f"Build failed with return code {e.returncode}")
         assert False, "hipcc build failed"
 
+
 compile()
-    
+
 finegrained_allocator = torch.cuda.memory.CUDAPluggableAllocator(
     finegrained_alloc_path,
     "finegrained_hipMalloc",
@@ -60,7 +75,8 @@ from .iris import (
     atomic_xchg,
 )
 from .util import (
-    do_bench
+    do_bench,
+    memset_tensor,
 )
 
 __all__ = [
@@ -71,6 +87,7 @@ __all__ = [
     "atomic_add",
     "atomic_sub",
     "atomic_cas",
-    "atomic_xchg,",
-    "do_bench,",
+    "atomic_xchg",
+    "do_bench",
+    "memset_tensor",
 ]

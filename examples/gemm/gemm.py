@@ -122,7 +122,10 @@ def persistent_gemm(
         # set the flag for the consumer kernel
         tl.debug_barrier()
 
-        if COMMUNICATION_ALGORITHM == ONE_SHOT:
+        if (
+            COMMUNICATION_ALGORITHM == ONE_SHOT
+            or COMMUNICATION_ALGORITHM == ONE_SHOT_V1
+        ):
             for remote in range(world_size):
                 iris.atomic_add(
                     tile_completed + tile_id,
@@ -133,12 +136,20 @@ def persistent_gemm(
                     sem="release",
                     scope="sys",
                 )
-        elif COMMUNICATION_ALGORITHM == ONE_SHOT_V1:
-            compare = 0
-            value = 1
-            tl.atomic_cas(
-                tile_completed + tile_id, compare, value, sem="release", scope="sys"
-            )
+        elif COMMUNICATION_ALGORITHM == ONE_SHOT_V2:
+            for remote in range(world_size):
+                compare = 0
+                value = 1
+                iris.atomic_cas(
+                    tile_completed + total_tiles * rank + tile_id,
+                    compare,
+                    value,
+                    rank,
+                    remote,
+                    heap_bases_ptr,
+                    sem="release",
+                    scope="sys",
+                )
         elif (
             COMMUNICATION_ALGORITHM == ALL_SCATTER
             or COMMUNICATION_ALGORITHM == ALL_REDUCE

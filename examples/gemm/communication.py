@@ -397,7 +397,6 @@ def one_shot_kernel(
         # better at handling flat loops instead of nested loops
         for sub_tile_idx in range(0, total_sub_tiles):
             acc = tl.zeros((REDUCTION_TILE_M, REDUCTION_TILE_N), dtype=tl.float32)
-            acc2 = tl.zeros((REDUCTION_TILE_M, REDUCTION_TILE_N), dtype=tl.float32)
 
             # Calculate start_row and start_col for the current sub-tile
             start_row = (sub_tile_idx // num_sub_tiles_n) * REDUCTION_TILE_M
@@ -420,8 +419,7 @@ def one_shot_kernel(
                 stride_cn_local,
             )
 
-            # For all the ranks, load and accumulate
-            for remote_rank in range(0, world_size, 2):
+            for remote_rank in range(0, world_size):
                 acc += iris.get(
                     partial_c + sub_offset,
                     cur_rank,
@@ -429,15 +427,6 @@ def one_shot_kernel(
                     heap_bases,
                     mask=sub_mask,
                 )
-                acc2 += iris.get(
-                    partial_c + sub_offset,
-                    cur_rank,
-                    remote_rank + 1,
-                    heap_bases,
-                    mask=sub_mask,
-                )
-
-            acc += acc2
 
             # Sub-tile completed, store the output as a sub-tile to c
             tl.store(c + sub_offset, acc, mask=sub_mask, cache_modifier=".wt")
@@ -449,6 +438,139 @@ def one_shot_kernel(
 
 @triton.jit
 def one_shot_v1_kernel(
+    partial_c,
+    c,
+    tile_completed_ptr,
+    M_local,
+    N_local,
+    stride_cm_local,
+    stride_cn_local,
+    stride_cm_global,
+    stride_cn_global,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    GROUP_SIZE_M: tl.constexpr,
+    total_tiles: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    NUM_SMS: tl.constexpr,
+    heap_bases: tl.tensor,
+    cur_rank: tl.constexpr,
+    world_size: tl.constexpr,
+    REDUCTION_TILE_M: tl.constexpr = 128,
+    REDUCTION_TILE_N: tl.constexpr = 128,
+    COLLECT_TIMESTAMPS: tl.constexpr = False,
+    begin_timestamp_ptr: tl.tensor = None,
+    middle_min_timestamp_ptr: tl.tensor = None,
+    middle_max_timestamp_ptr: tl.tensor = None,
+    end_timestamp_ptr: tl.tensor = None,
+):
+    pid = tl.program_id(axis=0)
+    # pid = (pid % 8) * (NUM_SMS // 8) + (pid // 8)
+
+    for tile in range(pid, total_tiles, NUM_SMS):
+        if COLLECT_TIMESTAMPS:
+            timestamp = read_realtime()
+            tl.atomic_min(begin_timestamp_ptr + tile, timestamp)
+
+    for tile in range(pid, total_tiles, NUM_SMS):
+
+        result = 0
+        # Wait for all ranks to produce this tile
+        while result != world_size:
+            compare = world_size
+            value = 0
+            result = iris.atomic_cas(
+                tile_completed_ptr + tile,
+                compare,
+                value,
+                cur_rank,
+                cur_rank,
+                heap_bases,
+                sem="acquire",
+                scope="sys",
+            )
+
+        # Consume the tile in sub-tiles
+        rm, rn, mask, rm_start, rn_start = offset_for_tile(
+            tile, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M, M_local, N_local
+        )
+
+        # Calculate the number of sub-tiles in each dimension
+        num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, REDUCTION_TILE_M)
+        num_sub_tiles_n = tl.cdiv(BLOCK_SIZE_N, REDUCTION_TILE_N)
+        total_sub_tiles = num_sub_tiles_m * num_sub_tiles_n
+
+        # Flattened loop over all sub-tiles, triton is
+        # better at handling flat loops instead of nested loops
+        for sub_tile_idx in range(0, total_sub_tiles):
+            acc = tl.zeros((REDUCTION_TILE_M, REDUCTION_TILE_N), dtype=tl.float32)
+
+            # Calculate start_row and start_col for the current sub-tile
+            start_row = (sub_tile_idx // num_sub_tiles_n) * REDUCTION_TILE_M
+            start_col = (sub_tile_idx % num_sub_tiles_n) * REDUCTION_TILE_N
+
+            # Extract the sub-mask and sub-offset for the current sub-block
+            sub_mask, sub_offset = extract_submask_and_offset(
+                rm,
+                rn,
+                mask,
+                rm_start,
+                rn_start,
+                start_row,
+                start_col,
+                REDUCTION_TILE_M,
+                REDUCTION_TILE_N,
+                BLOCK_SIZE_M,
+                BLOCK_SIZE_N,
+                stride_cm_local,
+                stride_cn_local,
+            )
+
+            if COLLECT_TIMESTAMPS:
+                timestamp = read_realtime()
+                tl.atomic_max(middle_max_timestamp_ptr + tile, timestamp)
+                tl.atomic_min(middle_min_timestamp_ptr + tile, timestamp)
+
+            # For all the ranks, load and accumulate
+            if world_size % 2 == 0:
+                acc2 = tl.zeros((REDUCTION_TILE_M, REDUCTION_TILE_N), dtype=tl.float32)
+                for remote_rank in range(0, world_size, 2):
+                    acc += iris.get(
+                        partial_c + sub_offset,
+                        cur_rank,
+                        remote_rank,
+                        heap_bases,
+                        mask=sub_mask,
+                    )
+                    acc2 += iris.get(
+                        partial_c + sub_offset,
+                        cur_rank,
+                        remote_rank + 1,
+                        heap_bases,
+                        mask=sub_mask,
+                    )
+                acc += acc2
+            else:
+                for remote_rank in range(world_size):
+                    acc += iris.get(
+                        partial_c + sub_offset,
+                        cur_rank,
+                        remote_rank,
+                        heap_bases,
+                        mask=sub_mask,
+                    )
+
+            # Sub-tile completed, store the output as a sub-tile to c
+            tl.store(c + sub_offset, acc, mask=sub_mask, cache_modifier=".wt")
+
+            # Sub-tile completed, store the output as a sub-tile to c
+            if COLLECT_TIMESTAMPS:
+                timestamp = read_realtime()
+                tl.atomic_max(end_timestamp_ptr + tile, timestamp)
+
+
+@triton.jit
+def one_shot_v2_kernel(
     partial_c,
     c,
     tile_completed_ptr,
@@ -532,18 +654,12 @@ def one_shot_v1_kernel(
                 result = 0
                 # Wait for the remote rank to produce this tile
                 while result == 0:
-                    compare = 1
-                    value = 0
-                    result = iris.atomic_cas(
-                        tile_completed_ptr + tile,
-                        compare,
-                        value,
-                        cur_rank,
-                        remote_rank,
-                        heap_bases,
-                        sem="acquire",
-                        scope="sys",
+                    result = tl.load(
+                        tile_completed_ptr + total_tiles * remote_rank + tile,
+                        volatile=True,
                     )
+                    # if result == 0:
+                    #     print("result", result)
 
                 acc += iris.get(
                     partial_c + sub_offset,
