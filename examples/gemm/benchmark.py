@@ -28,12 +28,12 @@ def parse_args():
         description="Parse matrix dimensions and configuration.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("-m", type=int, default=4864, help="Number of rows in matrix A")
+    parser.add_argument("-m", type=int, default=8192, help="Number of rows in matrix A")
     parser.add_argument(
-        "-n", type=int, default=4096, help="Number of columns in matrix B"
+        "-n", type=int, default=4608, help="Number of columns in matrix B"
     )
     parser.add_argument(
-        "-k", type=int, default=8256, help="Common dimension between matrices A and B"
+        "-k", type=int, default=36864, help="Common dimension between matrices A and B"
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument(
@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument(
         "--datatype",
         type=str,
-        default="fp32",
+        default="fp16",
         choices=["fp16", "fp32", "int8", "bf16"],
         help="Datatype of computation",
     )
@@ -67,7 +67,7 @@ def parse_args():
     )
     parser.add_argument("--BLK_M", type=int, default=256, help="Block size M")
     parser.add_argument("--BLK_N", type=int, default=256, help="Block size N")
-    parser.add_argument("--BLK_K", type=int, default=32, help="Block size K")
+    parser.add_argument("--BLK_K", type=int, default=64, help="Block size K")
     parser.add_argument(
         "--COMMUNICATION_TILE_M",
         type=int,
@@ -107,7 +107,7 @@ def parse_args():
     parser.add_argument(
         "--communication_sms_multiplier",
         type=int,
-        default=3,
+        default=2,
         help="Communication SMS multiplier",
     )
     return vars(parser.parse_args())
@@ -119,7 +119,8 @@ def main():
     shmem = iris.Iris(args["heap_size"])
     rank = shmem.get_rank()
     world_size = shmem.get_num_ranks()
-
+    cu_count = shmem.get_cu_count()
+    
     # GEMM
     datatype = torch.float32
     if args["datatype"] == "fp16":
@@ -198,7 +199,7 @@ def main():
         triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),
     )
 
-    if args["algorithm"] == "one_shot_v2":
+    if ((args["algorithm"] == "one_shot_v2") or (args["algorithm"] == "one_shot")):
         tile_completed = shmem.zeros(
             (total_tiles * world_size,), device="cuda", dtype=torch.int32
         )
@@ -298,6 +299,7 @@ def main():
                 args["mfmaInstrSize"],
                 args["kpack"],
                 shmem.get_heap_bases(),
+                cu_count,
                 COMMUNICATION_ALGORITHM,
                 args["trace_tiles"],
                 timestamps.mm_begin_timestamp,

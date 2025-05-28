@@ -10,6 +10,7 @@ from iris._mpi_helpers import (
 from iris._hip import (
     set_device,
     get_device,
+    get_cu_count,
     count_devices,
     malloc_fine_grained,
     get_ipc_handle,
@@ -228,6 +229,9 @@ class Iris:
 
     def get_device(self):
         return self.memory_pool.device
+    
+    def get_cu_count(self):
+        return get_cu_count(self.gpu_id)
 
     def get_rank(self):
         return self.cur_rank

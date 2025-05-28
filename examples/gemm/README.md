@@ -24,7 +24,6 @@ Where $B$ is partitioned  *column-wise* and hence each rank produces non-overlap
 You can run the example code by following these two steps:
 
 ```shell
-cd stream-k
 mpirun -np 4 python benchmark.py --benchmark --validate --algorithm one_shot
 ```
 

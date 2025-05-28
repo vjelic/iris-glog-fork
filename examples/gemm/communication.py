@@ -26,20 +26,23 @@ def tile_id_to_index_range(
     first_pid_m = group_id * GROUP_SIZE_M
     group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
 
-    pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
-    pid_n = (tile_id % num_pid_in_group) // group_size_m
+    tile_in_group = tile_id % num_pid_in_group
+    pid_m = first_pid_m + (tile_in_group % group_size_m)
+    pid_n = tile_in_group // group_size_m
 
     rm_start = pid_m * BLOCK_SIZE_M
     rn_start = pid_n * BLOCK_SIZE_N
 
+    # clamp to the maximum valid index (M-1, N-1)
+    max_m = M - 1
+    max_n = N - 1
+
+    # generate indices
     rm = rm_start + tl.arange(0, BLOCK_SIZE_M)
     rn = rn_start + tl.arange(0, BLOCK_SIZE_N)
 
-    rm = tl.where(rm < M, rm, M)
-    rn = tl.where(rn < N, rn, N)
-
-    rm = tl.max_contiguous(tl.multiple_of(rm, BLOCK_SIZE_M), BLOCK_SIZE_M)
-    rn = tl.max_contiguous(tl.multiple_of(rn, BLOCK_SIZE_N), BLOCK_SIZE_N)
+    rm = tl.minimum(rm, max_m)
+    rn = tl.minimum(rn, max_n)
 
     return rm, rn, rm_start, rn_start
 
@@ -355,16 +358,17 @@ def one_shot_kernel(
     end_timestamp_ptr: tl.tensor = None,
 ):
     pid = tl.program_id(axis=0)
+    pid = (pid % 8) * (NUM_SMS // 8) + (pid // 8)
 
     for tile in range(pid, total_tiles, NUM_SMS):
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
             tl.atomic_min(begin_timestamp_ptr + tile, timestamp)
-
-    for tile in range(pid, total_tiles, NUM_SMS):
+            
         result = 0
-        # Wait for all ranks to produce this tile
-        while result != world_size:
+        # Wait for first 2 ranks to produce this tile
+        # TODO: This is a HACK!
+        while result < 2: # world_size:
             compare = world_size
             value = 0
             result = iris.atomic_cas(
@@ -377,7 +381,7 @@ def one_shot_kernel(
                 sem="acquire",
                 scope="sys",
             )
-
+            
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
             tl.atomic_max(middle_max_timestamp_ptr + tile, timestamp)
@@ -419,14 +423,50 @@ def one_shot_kernel(
                 stride_cn_local,
             )
 
-            for remote_rank in range(0, world_size):
-                acc += iris.get(
+            # Simpler logic for reduction:
+            # for remote_rank in range(0, world_size):
+            #     acc += iris.get(
+            #         partial_c + sub_offset,
+            #         cur_rank,
+            #         remote_rank,
+            #         heap_bases,
+            #         mask=sub_mask,
+            #     )
+
+            # Advanced buffer swapping logic:
+            # For a given sub-tile, we will prefetch the data into rr first
+            # and while that is being reduced into acc, we will prefetch the next
+            # sub-tile into pp. This way we can overlap the reduction with the
+            # prefetching of the next sub-tile.
+            rr = iris.get(
+                partial_c + sub_offset,
+                cur_rank,
+                0,
+                heap_bases,
+                mask=sub_mask,
+            )
+
+            pp = tl.zeros((REDUCTION_TILE_M, REDUCTION_TILE_N), dtype=tl.float16)
+            tl.debug_barrier() # Ensure rr is ready before proceeding.
+
+            for remote_rank in range(1, world_size):
+                acc += rr
+                pp = iris.get(
                     partial_c + sub_offset,
                     cur_rank,
                     remote_rank,
                     heap_bases,
                     mask=sub_mask,
                 )
+                tl.debug_barrier() # Ensure pp is ready before proceeding.
+
+                # Swap buffers:
+                tmp = pp
+                pp = rr
+                rr = tmp
+
+            # For the last rank, we need to add the accumulated value
+            acc += rr
 
             # Sub-tile completed, store the output as a sub-tile to c
             tl.store(c + sub_offset, acc, mask=sub_mask, cache_modifier=".wt")
@@ -606,7 +646,6 @@ def one_shot_v2_kernel(
             tl.atomic_min(begin_timestamp_ptr + tile, timestamp)
 
     for tile in range(pid, total_tiles, NUM_SMS):
-
         # Consume the tile in sub-tiles
         rm, rn, mask, rm_start, rn_start = offset_for_tile(
             tile, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M, M_local, N_local
