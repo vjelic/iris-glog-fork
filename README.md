@@ -77,7 +77,9 @@ pip install -e .
 ## Getting started
 
 We provide both a Docker and Apptainer files that sets up all dependencies.
+
 #### Docker
+
 To build the image:
 
 ```shell
@@ -107,3 +109,11 @@ Once inside the Apptainer image, source the `activate.sh` script.
 source activate.sh
 ```
 
+### Development Environment
+
+Using docker compose, you can get started with a simple dev environment where the active iris directory is mounted inside the docker container. This way, any changes you make outside the container to iris are reflected inside the container (getting set up with a vscode instance becomes easy!)
+
+```shell
+docker compose up --build -d
+docker attach iris-dev
+```

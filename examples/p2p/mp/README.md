@@ -5,7 +5,7 @@ A simple message passing example using Triton. This example demonstrates how to 
 ## Usage
 
 ```terminal
-mpirun -np 2 python p2p/message_passing.py
+mpirun -np 2 python examples/p2p/mp/message_passing.py
 ```
 Prints:
 ```terminal
