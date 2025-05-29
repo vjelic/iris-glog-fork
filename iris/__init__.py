@@ -4,6 +4,22 @@ import os
 import torch
 import subprocess
 
+from .iris import (
+    Iris,
+    translate,
+    get,
+    put,
+    atomic_add,
+    atomic_sub,
+    atomic_cas,
+    atomic_xchg,
+)
+
+from .util import (
+    do_bench,
+    memset_tensor,
+)
+
 # Pipe allocations via finegrained allocator
 current_dir = os.path.dirname(__file__)
 finegrained_alloc_path = os.path.join(
@@ -62,22 +78,6 @@ finegrained_allocator = torch.cuda.memory.CUDAPluggableAllocator(
     "finegrained_hipFree",
 )
 torch.cuda.memory.change_current_allocator(finegrained_allocator)
-
-
-from .iris import (
-    Iris,
-    translate,
-    get,
-    put,
-    atomic_add,
-    atomic_sub,
-    atomic_cas,
-    atomic_xchg,
-)
-from .util import (
-    do_bench,
-    memset_tensor,
-)
 
 __all__ = [
     "Iris",

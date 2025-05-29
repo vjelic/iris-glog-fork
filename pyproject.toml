@@ -37,7 +37,10 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-exclude = ["iris/finegrained_alloc"]
+exclude = [
+    "iris/finegrained_alloc/**",  # explicitly exclude all contents
+    "**/*.ipynb"                  # match notebooks anywhere
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W"] 

@@ -210,9 +210,9 @@ class Iris:
         self.log_debug(
             f"linspace: start = {start}, end = {end}, steps = {steps}, dtype = {dtype}"
         )
-        size, num_elements = self.parse_size(size)
+        size, num_elements = self.parse_size(steps)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
-        torch.linspace(start, end, steps, out=tensor)
+        torch.linspace(start, end, size, out=tensor, dtype=dtype, device="cuda")
         return tensor.reshape(size)
 
     def deallocate(self, pointer):
