@@ -5,7 +5,8 @@ import sys
 import os
 import argparse
 import json
-from utils import *
+
+from utils import JSONWriter, ONE_SHOT, ALL_REDUCE, ALL_SCATTER, Timestamps, is_triton_interpret_set
 
 import iris
 

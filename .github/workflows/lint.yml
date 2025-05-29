@@ -19,7 +19,7 @@ jobs:
         run: pip install ruff
 
       - name: Run Ruff and auto-fix issues
-        run: ruff check . --fix --unsafe-fixes
+        run: ruff check . --fix
 
       - name: Run Ruff formatter
         run: ruff format .
