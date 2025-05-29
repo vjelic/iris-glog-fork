@@ -8,7 +8,8 @@ import os
 # from streamk_kernel_atomic import streamk_gemm
 from gemm import persistent_gemm
 
-from utils import *
+from utils import is_triton_interpret_set
+from utils import ALL_SCATTER, ALL_REDUCE, ONE_SHOT
 
 gemm_kernel = persistent_gemm
 

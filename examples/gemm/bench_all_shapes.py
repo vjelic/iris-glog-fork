@@ -123,7 +123,7 @@ def main(hashes, config, sbatch_script_content, input_json, tiling_json, dry_run
                 key: entry[key] for key in optional_keys if key in entry
             }
 
-    if config["partition"] != None:
+    if config["partition"] is not None:
         if "mi300" in config["partition"]:
             print("Running on MI300")
             total_sms = 304

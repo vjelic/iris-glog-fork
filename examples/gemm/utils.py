@@ -7,7 +7,7 @@ import numpy as np
 import os
 
 # Communication Algorithms
-NONE = tl.constexpr(0)
+NONE = tl.constexpr(0) # TODO: None is bad here
 ALL_SCATTER = tl.constexpr(1)
 ALL_REDUCE = tl.constexpr(2)
 ONE_SHOT = tl.constexpr(3)

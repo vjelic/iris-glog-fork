@@ -1,6 +1,7 @@
 import triton
 import triton.language as tl
-from utils import *
+from utils import read_realtime
+from utils import ALL_SCATTER, ALL_REDUCE, ONE_SHOT
 
 import sys
 import os
