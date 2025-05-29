@@ -10,12 +10,7 @@ from gemm import persistent_gemm
 
 from utils import *
 
-gpu = "mi300"
-gpu = "mi250"
-
-num_xcds = 8 if gpu == "mi300" else 1
 gemm_kernel = persistent_gemm
-
 
 class matmul(torch.autograd.Function):
 
@@ -50,7 +45,8 @@ class matmul(torch.autograd.Function):
         mfmaInstrSize: int,
         kpack: int,
         heap_bases_ptr: torch.Tensor = None,
-        COMMUNICATION_ALGORITHM: int = NONE,
+        cu_count: int = 304,
+        COMMUNICATION_ALGORITHM: int = None,
         COLLECT_TIMESTAMPS: bool = False,
         mm_begin_timestamp: torch.Tensor = None,
         mm_end_timestamp: torch.Tensor = None,
@@ -61,6 +57,10 @@ class matmul(torch.autograd.Function):
         assert a.shape[1] == b.shape[0], "incompatible dimensions"
         M, K = a.shape
         _, N = b.shape
+        
+        num_xcds = 1
+        if cu_count == 304:
+            num_xcds = 8
 
         total_blocks_M = triton.cdiv(M, BLK_M)
         total_blocks_N = triton.cdiv(N, BLK_N)
@@ -178,7 +178,8 @@ class matmul(torch.autograd.Function):
         mfmaInstrSize=16,
         kpack=1,
         heap_bases_ptr: torch.Tensor = None,
-        COMMUNICATION_ALGORITHM: int = NONE,
+        cu_count: int = 304,
+        COMMUNICATION_ALGORITHM: int = None,
         COLLECT_TIMESTAMPS: bool = False,
         mm_begin_timestamp: torch.Tensor = None,
         mm_end_timestamp: torch.Tensor = None,
@@ -205,6 +206,7 @@ class matmul(torch.autograd.Function):
             mfmaInstrSize=mfmaInstrSize,
             kpack=kpack,
             heap_bases_ptr=heap_bases_ptr,
+            cu_count=cu_count,
             COMMUNICATION_ALGORITHM=COMMUNICATION_ALGORITHM,
             COLLECT_TIMESTAMPS=COLLECT_TIMESTAMPS,
             mm_begin_timestamp=mm_begin_timestamp,
