@@ -13,8 +13,6 @@ from communication import (
     all_scatter_kernel,
     one_shot_kernel,
     all_reduce_kernel,
-    one_shot_v1_kernel,
-    one_shot_v2_kernel,
 )
 from matmul_wrapper import matmul
 from validation import validate_gemm
@@ -56,7 +54,7 @@ def parse_args():
         "--algorithm",
         type=str,
         default="all_reduce",
-        choices=["all_reduce", "all_scatter", "one_shot", "one_shot_v1", "one_shot_v2"],
+        choices=["all_reduce", "all_scatter", "one_shot"],
         help="Algorithm to use",
     )
     parser.add_argument(
@@ -65,8 +63,10 @@ def parse_args():
         default="log.json",
         help="Output file",
     )
+    # For All Scatter, use: 256x64x64
+    # For One Shot, use: 256x256x64
     parser.add_argument("--BLK_M", type=int, default=256, help="Block size M")
-    parser.add_argument("--BLK_N", type=int, default=256, help="Block size N")
+    parser.add_argument("--BLK_N", type=int, default=64, help="Block size N")
     parser.add_argument("--BLK_K", type=int, default=64, help="Block size K")
     parser.add_argument(
         "--COMMUNICATION_TILE_M",
@@ -80,7 +80,7 @@ def parse_args():
         default=128,
         help="N tile size for reduction, scatter or one-shot",
     )
-    parser.add_argument("--gsize_m", type=int, default=8, help="Grid size M")
+    parser.add_argument("--gsize_m", type=int, default=1, help="Grid size M")
     parser.add_argument("--two_tiles", type=str, default="True", help="Use two tiles")
     parser.add_argument("--num_stages", type=int, default=1, help="Number of stages")
     parser.add_argument("--num_warps", type=int, default=8, help="Number of warps")
@@ -92,8 +92,11 @@ def parse_args():
     )
     parser.add_argument("--kpack", type=int, default=2, help="K packing size")
     parser.add_argument("--heap_size", type=int, default=1 << 33, help="Iris heap size")
+    
+    # For All Scatter, use: 288
+    # For One Shot, use: 256
     parser.add_argument(
-        "--gemm_sms", type=int, default=256, help="Number of SMs for Stream-K"
+        "--gemm_sms", type=int, default=288, help="Number of SMs for Stream-K"
     )
     parser.add_argument(
         "--total_sms", type=int, default=304, help="Total number of SMs"
@@ -104,6 +107,9 @@ def parse_args():
         default=256,
         help="Communication block size",
     )
+
+    # For All Scatter, use: 10
+    # For One Shot, use: 2
     parser.add_argument(
         "--communication_sms_multiplier",
         type=int,
@@ -161,8 +167,6 @@ def main():
     elif (
         args["algorithm"] == "all_reduce"
         or args["algorithm"] == "one_shot"
-        or args["algorithm"] == "one_shot_v1"
-        or args["algorithm"] == "one_shot_v2"
     ):
         rows_per_gpu = args["k"] // world_size
         args["k"] = rows_per_gpu
@@ -199,12 +203,7 @@ def main():
         triton.cdiv(communication_num_threads, meta["BLOCK_SIZE"]),
     )
 
-    if ((args["algorithm"] == "one_shot_v2") or (args["algorithm"] == "one_shot")):
-        tile_completed = shmem.zeros(
-            (total_tiles * world_size,), device="cuda", dtype=torch.int32
-        )
-    else:
-        tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
+    tile_completed = shmem.zeros((total_tiles,), device="cuda", dtype=torch.int32)
 
     locks = shmem.zeros((args["gemm_sms"],), device="cuda", dtype=torch.int32)
 
@@ -239,13 +238,9 @@ def main():
         },
     }
 
-    COMMUNICATION_ALGORITHM = NONE
+    COMMUNICATION_ALGORITHM = None
     if args["algorithm"] == "one_shot":
         COMMUNICATION_ALGORITHM = ONE_SHOT
-    elif args["algorithm"] == "one_shot_v1":
-        COMMUNICATION_ALGORITHM = ONE_SHOT_V1
-    elif args["algorithm"] == "one_shot_v2":
-        COMMUNICATION_ALGORITHM = ONE_SHOT_V2
     elif args["algorithm"] == "all_reduce":
         COMMUNICATION_ALGORITHM = ALL_REDUCE
     elif args["algorithm"] == "all_scatter":
@@ -344,62 +339,6 @@ def main():
                     )
                 elif args["algorithm"] == "all_reduce":
                     ss = all_reduce_kernel[comm_grid](
-                        local_C,
-                        global_C,
-                        tile_completed,
-                        args["m"],
-                        args["n"],
-                        local_C.stride(0),
-                        local_C.stride(1),
-                        C.stride(0),
-                        C.stride(1),
-                        args["BLK_M"],
-                        args["BLK_N"],
-                        args["gsize_m"],
-                        total_tiles,
-                        args["communication_block_size"],
-                        communication_sms,
-                        shmem.get_heap_bases(),
-                        rank,
-                        world_size,
-                        args["COMMUNICATION_TILE_M"],
-                        args["COMMUNICATION_TILE_N"],
-                        args["trace_tiles"],
-                        timestamps.comm_begin_timestamp,
-                        timestamps.comm_middle_min_timestamp,
-                        timestamps.comm_middle_max_timestamp,
-                        timestamps.comm_end_timestamp,
-                    )
-                elif args["algorithm"] == "one_shot_v1":
-                    ss = one_shot_v1_kernel[comm_grid](
-                        local_C,
-                        global_C,
-                        tile_completed,
-                        args["m"],
-                        args["n"],
-                        local_C.stride(0),
-                        local_C.stride(1),
-                        C.stride(0),
-                        C.stride(1),
-                        args["BLK_M"],
-                        args["BLK_N"],
-                        args["gsize_m"],
-                        total_tiles,
-                        args["communication_block_size"],
-                        communication_sms,
-                        shmem.get_heap_bases(),
-                        rank,
-                        world_size,
-                        args["COMMUNICATION_TILE_M"],
-                        args["COMMUNICATION_TILE_N"],
-                        args["trace_tiles"],
-                        timestamps.comm_begin_timestamp,
-                        timestamps.comm_middle_min_timestamp,
-                        timestamps.comm_middle_max_timestamp,
-                        timestamps.comm_end_timestamp,
-                    )
-                elif args["algorithm"] == "one_shot_v2":
-                    ss = one_shot_v2_kernel[comm_grid](
                         local_C,
                         global_C,
                         tile_completed,
