@@ -80,7 +80,9 @@ def parse_args():
         default=128,
         help="N tile size for reduction, scatter or one-shot",
     )
-    parser.add_argument("--gsize_m", type=int, default=1, help="Grid size M")
+    
+    # Best to try 1, 6 or 8
+    parser.add_argument("--gsize_m", type=int, default=6, help="Grid size M")
     parser.add_argument("--two_tiles", type=str, default="True", help="Use two tiles")
     parser.add_argument("--num_stages", type=int, default=1, help="Number of stages")
     parser.add_argument("--num_warps", type=int, default=8, help="Number of warps")

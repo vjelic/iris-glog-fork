@@ -228,6 +228,7 @@ def all_scatter_kernel(
     end_timestamp_ptr: tl.tensor = None,
 ):
     pid = tl.program_id(axis=0)
+    pid = (pid % 8) * (NUM_SMS // 8) + (pid // 8)
 
     for tile in range(pid, total_tiles, NUM_SMS):
         if COLLECT_TIMESTAMPS:
