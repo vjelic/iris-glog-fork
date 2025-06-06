@@ -17,7 +17,9 @@ inline bool is_logging_enabled() {
   return std::getenv("LOG_FINEGRAINED_ALLOCATOR") != nullptr;
 }
 
-inline void log_allocation(const char* operation, void* ptr, ssize_t size,
+inline void log_allocation(const char* operation,
+                           void* ptr,
+                           ssize_t size,
                            int device) {
   if (is_logging_enabled()) {
     std::cout << "[finegrained_allocator] " << operation << ": ptr=" << ptr
@@ -26,7 +28,8 @@ inline void log_allocation(const char* operation, void* ptr, ssize_t size,
 }
 
 extern "C" {
-void* finegrained_hipMalloc(ssize_t size, int device,
+void* finegrained_hipMalloc(ssize_t size,
+                            int device,
                             hipStream_t stream [[maybe_unused]]) {
   void* ptr;
   const auto flags = hipDeviceMallocUncached;
@@ -42,7 +45,9 @@ void* finegrained_hipMalloc(ssize_t size, int device,
   return ptr;
 }
 
-void finegrained_hipFree(void* ptr, ssize_t size [[maybe_unused]], int device,
+void finegrained_hipFree(void* ptr,
+                         ssize_t size [[maybe_unused]],
+                         int device,
                          hipStream_t stream [[maybe_unused]]) {
   int current_device;
   hip_try(hipGetDevice(&current_device));

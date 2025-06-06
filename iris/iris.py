@@ -121,7 +121,7 @@ class Iris:
         new_tensor.zero_()
         return new_tensor
 
-    def arange(self, *size, dtype=torch.int):
+    def arange(self, *size, dtype=torch.int, device=None):
         self.log_debug(f"arange: size = {size}, dtype = {dtype}")
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
