@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Advanced Micro Devices, Inc. All rights reserved.
+
 import triton
 import triton.language as tl
 from utils import read_realtime
@@ -204,9 +207,7 @@ def persistent_gemm_all_scatter(
         # C_ = C + rm[:, None] * stride_cm + rn[None, :] * stride_cn
         # # tl.store(C_, c, c_mask)
 
-        rm, rn, mask, rm_start, rn_start = offset_for_tile(
-            tile_id, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M, M, N
-        )
+        rm, rn, mask, rm_start, rn_start = offset_for_tile(tile_id, BLOCK_SIZE_M, BLOCK_SIZE_N, GROUP_SIZE_M, M, N)
 
         # Calculate the number of sub-tiles in each dimension
         num_sub_tiles_m = tl.cdiv(BLOCK_SIZE_M, BLOCK_SIZE_M)
