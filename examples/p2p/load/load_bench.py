@@ -17,7 +17,7 @@ random.seed(123)
 
 
 @triton.jit
-def get_kernel(
+def load_kernel(
     source_buffer,  # tl.tensor: pointer to source data
     result_buffer,  # tl.tensor: pointer to result data
     buffer_size,  # int32: total number of elements
@@ -35,7 +35,7 @@ def get_kernel(
     mask = offsets < buffer_size
 
     # Get data from target buffer
-    result = iris.get(
+    result = iris.load(
         source_buffer + offsets,
         source_rank,
         destination_rank,
@@ -120,9 +120,9 @@ def run_experiment(shmem, args, source_rank, destination_rank, source_buffer, re
         if cur_rank == source_rank:
             store_kernel[grid](result_buffer, n_elements, args["block_size"])
 
-    def run_get():
+    def run_load():
         if cur_rank == source_rank:
-            get_kernel[grid](
+            load_kernel[grid](
                 source_buffer,
                 result_buffer,
                 n_elements,
@@ -137,9 +137,9 @@ def run_experiment(shmem, args, source_rank, destination_rank, source_buffer, re
     shmem.barrier()
     store_ms = iris.do_bench(run_store, shmem.barrier)
 
-    run_get()
+    run_load()
     shmem.barrier()
-    get_ms = iris.do_bench(run_get, shmem.barrier)
+    get_ms = iris.do_bench(run_load, shmem.barrier)
 
     # Subtract overhead
     triton_ms = get_ms - store_ms
@@ -185,7 +185,7 @@ def run_experiment(shmem, args, source_rank, destination_rank, source_buffer, re
     return bandwidth_gbps
 
 
-def print_bandwidth_matrix(matrix, label="Unidirectional GET bandwidth GiB/s [Remote read]"):
+def print_bandwidth_matrix(matrix, label="Unidirectional LOAD bandwidth GiB/s [Remote read]"):
     num_ranks = matrix.shape[0]
     col_width = 10  # Adjust for alignment
 
