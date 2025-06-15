@@ -9,11 +9,11 @@ import os
 
 # from streamk_kernel import streamk_gemm
 # from streamk_kernel_atomic import streamk_gemm
-from gemm_all_scatter import persistent_gemm_all_scatter
+from gemm_all_reduce import persistent_gemm_all_reduce
 
 from examples.common.utils import is_triton_interpret_set
 
-gemm_kernel = persistent_gemm_all_scatter
+gemm_kernel = persistent_gemm_all_reduce
 
 
 class matmul(torch.autograd.Function):
