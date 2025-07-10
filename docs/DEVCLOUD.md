@@ -28,7 +28,7 @@ Install the required system packages:
 sudo apt-get update && sudo apt-get install -y python3-venv cmake openmpi-bin libopenmpi-dev
 ```
 
-### 1. Create and Activate Virtual Environment
+### 3. Create and Activate Virtual Environment
 
 Create a Python virtual environment to isolate Iris dependencies:
 
@@ -40,7 +40,7 @@ python3 -m venv iris_env
 source iris_env/bin/activate
 ```
 
-### Install Python Dependencies
+### 4. Install Python Dependencies
 ```bash
 pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm6.4
 ```

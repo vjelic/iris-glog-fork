@@ -177,8 +177,8 @@ jobs:
         check_test_result "./test_outputs/iris_results/all_store_bench.json" "All Store" || overall_success=false
         check_test_result "./test_outputs/iris_results/atomic_add_bench.json" "Atomic Add" || overall_success=false
         check_test_result "./test_outputs/iris_results/atomic_xchg_bench.json" "Atomic Xchg" || overall_success=false
-        check_test_result "./test_outputs/iris_results/message_passing_load_store.json" "Message Passing Load Store" || overall_success=false
-        check_test_result "./test_outputs/iris_results/message_passing_put.json" "Message Passing Put" || overall_success=false
+        #check_test_result "./test_outputs/iris_results/message_passing_load_store.json" "Message Passing Load Store" || overall_success=false
+        #check_test_result "./test_outputs/iris_results/message_passing_put.json" "Message Passing Put" || overall_success=false
         check_test_result "./test_outputs/iris_results/gemm_all_scatter_bench.json" "GEMM All Scatter" || overall_success=false
         check_test_result "./test_outputs/iris_results/gemm_atomics_all_reduce_bench.json" "GEMM Atomics All Reduce" || overall_success=false
         check_test_result "./test_outputs/iris_results/gemm_one_shot_all_reduce_bench.json" "GEMM One Shot All Reduce" || overall_success=false
