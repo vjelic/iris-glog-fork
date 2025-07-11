@@ -7,6 +7,7 @@ import triton
 import triton.language as tl
 import iris
 
+
 # A generic kernel to "put" (push) a contiguous block of data
 # from a local buffer to a remote buffer. This is the core communication
 # primitive we will use to build the all-gather.
@@ -27,7 +28,9 @@ def put_kernel(
 
     # iris.put is the key operation. It reads from the local_source_ptr
     # and writes to the remote_dest_ptr on the specified remote_rank.
-    iris.put(local_source_ptr + offsets, remote_dest_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask)
+    iris.put(
+        local_source_ptr + offsets, remote_dest_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask
+    )
 
 
 def main():
@@ -56,7 +59,7 @@ def main():
     # The `device` argument is removed, as torch will use the active device set by Iris.
     start_value = current_rank * 100
     local_data_torch = torch.arange(start_value, start_value + ELEMENTS_PER_GPU, dtype=dtype)
-    
+
     # Copy the torch-created data into an Iris-managed buffer.
     local_slice = shmem.empty((ELEMENTS_PER_GPU,), dtype=dtype)
     local_slice.copy_(local_data_torch)
@@ -79,7 +82,7 @@ def main():
     print(f"[Rank {current_rank}] Starting all-to-all data exchange...")
     for dest_rank in range(world_size):
         if dest_rank == current_rank:
-            continue # No need to send data to ourselves.
+            continue  # No need to send data to ourselves.
 
         # The destination for our data on the remote GPU is the slice
         # corresponding to our own rank. We get a pointer to this slice
@@ -111,8 +114,8 @@ def main():
     for i in range(world_size):
         start_val = i * 100
         slice_data = torch.arange(start_val, start_val + ELEMENTS_PER_GPU, dtype=dtype)
-        expected_result[i * ELEMENTS_PER_GPU:(i + 1) * ELEMENTS_PER_GPU] = slice_data
-    
+        expected_result[i * ELEMENTS_PER_GPU : (i + 1) * ELEMENTS_PER_GPU] = slice_data
+
     # Move the expected result to the correct GPU for comparison
     expected_result = expected_result.to(shmem.get_device())
 
@@ -132,6 +135,7 @@ def main():
             print(f"   Received: {global_buffer[first_mismatch_idx].item()}")
 
     shmem.barrier()
+
 
 if __name__ == "__main__":
     main()
