@@ -23,7 +23,7 @@ spec.loader.exec_module(module)
 @pytest.mark.parametrize(
     "dtype",
     [
-        torch.int8,  # ISSUE!
+        torch.int8,
         torch.float16,
         torch.bfloat16,
         torch.float32,
@@ -38,8 +38,8 @@ spec.loader.exec_module(module)
 @pytest.mark.parametrize(
     "block_size",
     [
-        256,
         512,
+        1024,
     ],
 )
 def test_load_bench(dtype, buffer_size, heap_size, block_size):
@@ -48,7 +48,7 @@ def test_load_bench(dtype, buffer_size, heap_size, block_size):
 
     bandwidth_matrix = np.zeros((num_ranks, num_ranks), dtype=np.float32)
     element_size_bytes = torch.tensor([], dtype=dtype).element_size()
-    source_buffer = shmem.arange(buffer_size // element_size_bytes, device="cuda", dtype=dtype)
+    source_buffer = shmem.ones(buffer_size // element_size_bytes, dtype=dtype)
     result_buffer = shmem.zeros_like(source_buffer)
 
     for source_rank in range(num_ranks):

@@ -30,8 +30,8 @@ def load_kernel(
     pid = tl.program_id(0)
 
     # Compute start index of this block
-    block_start = pid * BLOCK_SIZE
-    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    block_start = pid.to(tl.int64) * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE).to(tl.int64)
     # Guard for out-of-bounds accesses
     mask = offsets < buffer_size
 
@@ -55,8 +55,8 @@ def store_kernel(
     BLOCK_SIZE: tl.constexpr,
 ):
     pid = tl.program_id(0)
-    block_start = pid * BLOCK_SIZE
-    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    block_start = pid.to(tl.int64) * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE).to(tl.int64)
     mask = offsets < buffer_size
     tl.store(result_buffer + offsets, 0, mask=mask)
 
@@ -238,7 +238,7 @@ def main():
 
     dtype = torch_dtype_from_str(args["datatype"])
     element_size_bytes = torch.tensor([], dtype=dtype).element_size()
-    source_buffer = shmem.arange(args["buffer_size"] // element_size_bytes, device="cuda", dtype=dtype)
+    source_buffer = shmem.ones(args["buffer_size"] // element_size_bytes, device="cuda", dtype=dtype)
     result_buffer = shmem.zeros_like(source_buffer)
 
     for source_rank in range(num_ranks):
