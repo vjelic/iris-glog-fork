@@ -7,16 +7,17 @@ import triton
 import triton.language as tl
 import iris
 
+
 # This kernel is run by the 'gatherer' GPU.
 # It uses an index map on a remote GPU to gather data from that same remote GPU.
 @triton.jit
 def indirect_gather_kernel(
-    source_data_ptr,     # Remote pointer to the source data array.
-    index_map_ptr,       # Remote pointer to the index map.
-    local_result_ptr,    # Local pointer to store the gathered data.
+    source_data_ptr,  # Remote pointer to the source data array.
+    index_map_ptr,  # Remote pointer to the index map.
+    local_result_ptr,  # Local pointer to store the gathered data.
     num_elements,
-    gatherer_rank,       # The rank of this GPU, the one doing the gathering.
-    data_holder_rank,    # The rank of the GPU that holds the data and index map.
+    gatherer_rank,  # The rank of this GPU, the one doing the gathering.
+    data_holder_rank,  # The rank of the GPU that holds the data and index map.
     heap_bases_ptr,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -51,7 +52,14 @@ def put_kernel(
     pid = tl.program_id(axis=0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < num_elements
-    iris.put(local_source_ptr + offsets, remote_destination_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask)
+    iris.put(
+        local_source_ptr + offsets,
+        remote_destination_ptr + offsets,
+        current_rank,
+        remote_rank,
+        heap_bases_ptr,
+        mask=mask,
+    )
 
 
 def main():
@@ -70,7 +78,7 @@ def main():
 
     # --- Configuration ---
     data_holder_rank = 0  # GPU 0 holds the original data and indices.
-    gatherer_rank = 1     # GPU 1 performs the gather operation.
+    gatherer_rank = 1  # GPU 1 performs the gather operation.
     buffer_size = 16384
     dtype = torch.float32
     index_dtype = torch.int32
@@ -92,7 +100,6 @@ def main():
     else:
         # Other ranks just need an empty placeholder with the right shape and type.
         index_map = shmem.empty((buffer_size,), dtype=index_dtype)
-
 
     # On GPU 1: The buffer where the gathered data will be stored.
     gathered_result_buffer = shmem.zeros(buffer_size, device="cuda", dtype=dtype)
@@ -122,8 +129,8 @@ def main():
     if current_rank == gatherer_rank:
         print(f"[Rank {current_rank}] Sending my result back to Rank {data_holder_rank} for validation...")
         put_kernel[grid](
-            gathered_result_buffer, # Local source
-            validation_buffer,      # Remote destination
+            gathered_result_buffer,  # Local source
+            validation_buffer,  # Remote destination
             buffer_size,
             gatherer_rank,
             data_holder_rank,

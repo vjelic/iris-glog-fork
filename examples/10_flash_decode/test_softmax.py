@@ -7,14 +7,15 @@ import triton
 import triton.language as tl
 import iris
 
+
 # This kernel computes a numerically stable softmax for each row of a 2D tensor.
 @triton.jit
 def softmax_kernel(
-    x_ptr,               # Pointer to the input tensor slice.
-    y_ptr,               # Pointer to the output tensor slice.
-    stride_x_row,        # Stride to move from one row to the next in the input tensor.
-    stride_y_row,        # Stride to move from one row to the next in the output tensor.
-    num_cols,            # Number of columns in the matrix.
+    x_ptr,  # Pointer to the input tensor slice.
+    y_ptr,  # Pointer to the output tensor slice.
+    stride_x_row,  # Stride to move from one row to the next in the input tensor.
+    stride_y_row,  # Stride to move from one row to the next in the output tensor.
+    num_cols,  # Number of columns in the matrix.
     BLOCK_SIZE: tl.constexpr,
 ):
     # Each program instance computes the softmax for one row of its assigned slice.
@@ -26,7 +27,7 @@ def softmax_kernel(
 
     col_offsets = tl.arange(0, BLOCK_SIZE)
     mask = col_offsets < num_cols
-    row_data = tl.load(row_x_ptr + col_offsets, mask=mask, other=-float('inf'))
+    row_data = tl.load(row_x_ptr + col_offsets, mask=mask, other=-float("inf"))
 
     # Numerically stable softmax calculation
     row_max = tl.max(row_data, axis=0)
@@ -54,7 +55,9 @@ def put_kernel(
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < num_elements
     # iris.put is the primitive that performs a local load and a remote store.
-    iris.put(local_source_ptr + offsets, remote_dest_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask)
+    iris.put(
+        local_source_ptr + offsets, remote_dest_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask
+    )
 
 
 def main():
@@ -85,8 +88,8 @@ def main():
     # Each rank creates its own unique, but predictable, slice of the input data.
     # This avoids issues with random number generation in a distributed setting.
     slice_data = torch.arange(NUM_COLS, device="cuda", dtype=dtype).unsqueeze(0).repeat(NUM_ROWS_PER_GPU, 1)
-    slice_data += current_rank * 100 # Add a large offset to make each rank's data unique.
-    
+    slice_data += current_rank * 100  # Add a large offset to make each rank's data unique.
+
     x_slice = shmem.empty((NUM_ROWS_PER_GPU, NUM_COLS), dtype=dtype)
     x_slice.copy_(slice_data)
 
@@ -108,7 +111,7 @@ def main():
         x_slice,
         y_slice_for_local_write,
         x_slice.stride(0),
-        y_global.stride(0), # Use the stride of the larger global tensor
+        y_global.stride(0),  # Use the stride of the larger global tensor
         NUM_COLS,
         BLOCK_SIZE=SOFTMAX_BLOCK_SIZE,
     )
@@ -121,7 +124,7 @@ def main():
     print(f"[Rank {current_rank}] Starting all-gather to distribute results...")
     for remote_rank in range(world_size):
         if remote_rank == current_rank:
-            continue # Don't need to send data to ourselves.
+            continue  # Don't need to send data to ourselves.
 
         # The data we are sending is our computed slice.
         local_source_slice = y_global[current_rank * NUM_ROWS_PER_GPU : (current_rank + 1) * NUM_ROWS_PER_GPU, :]
@@ -151,12 +154,12 @@ def main():
     print(f"[Rank {current_rank}] Validating the final gathered result...")
 
     # Reconstruct the full input tensor based on our predictable data generation scheme.
-    full_x = torch.empty((TOTAL_ROWS, NUM_COLS), device='cuda', dtype=dtype)
+    full_x = torch.empty((TOTAL_ROWS, NUM_COLS), device="cuda", dtype=dtype)
     for i in range(world_size):
         slice_data = torch.arange(NUM_COLS, device="cuda", dtype=dtype).unsqueeze(0).repeat(NUM_ROWS_PER_GPU, 1)
         slice_data += i * 100
-        full_x[i * NUM_ROWS_PER_GPU:(i + 1) * NUM_ROWS_PER_GPU, :] = slice_data
-    
+        full_x[i * NUM_ROWS_PER_GPU : (i + 1) * NUM_ROWS_PER_GPU, :] = slice_data
+
     expected_y = torch.softmax(full_x, dim=1)
     is_correct = torch.allclose(y_global, expected_y, atol=1e-5, rtol=1e-4)
 
@@ -166,6 +169,7 @@ def main():
         print(f"\n[Rank {current_rank}] ❌ Validation FAILED! The final result is incorrect.")
 
     shmem.barrier()
+
 
 if __name__ == "__main__":
     main()

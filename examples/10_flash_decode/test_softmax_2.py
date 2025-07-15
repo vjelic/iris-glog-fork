@@ -9,6 +9,7 @@ import iris
 
 # --- Kernel Definitions (Unchanged) ---
 
+
 # Kernel to compute softmax on a local slice of data.
 @triton.jit
 def softmax_kernel(x_ptr, y_ptr, stride_x_row, stride_y_row, num_cols, BLOCK_SIZE: tl.constexpr):
@@ -17,30 +18,41 @@ def softmax_kernel(x_ptr, y_ptr, stride_x_row, stride_y_row, num_cols, BLOCK_SIZ
     row_y_ptr = y_ptr + row_idx * stride_y_row
     col_offsets = tl.arange(0, BLOCK_SIZE)
     mask = col_offsets < num_cols
-    row_data = tl.load(row_x_ptr + col_offsets, mask=mask, other=-float('inf'))
+    row_data = tl.load(row_x_ptr + col_offsets, mask=mask, other=-float("inf"))
     row_max = tl.max(row_data, axis=0)
     numerator = tl.exp(row_data - row_max)
     denominator = tl.sum(numerator, axis=0)
     softmax_output = numerator / denominator
     tl.store(row_y_ptr + col_offsets, softmax_output, mask=mask)
 
+
 # Kernel to "put" (push) data to a remote GPU. Used for the final gather.
 @triton.jit
-def put_kernel(local_source_ptr, remote_dest_ptr, num_elements, current_rank, remote_rank, heap_bases_ptr, BLOCK_SIZE: tl.constexpr):
+def put_kernel(
+    local_source_ptr, remote_dest_ptr, num_elements, current_rank, remote_rank, heap_bases_ptr, BLOCK_SIZE: tl.constexpr
+):
     pid = tl.program_id(axis=0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < num_elements
-    iris.put(local_source_ptr + offsets, remote_dest_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask)
+    iris.put(
+        local_source_ptr + offsets, remote_dest_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask
+    )
+
 
 # --- New Kernel for the Scatter Phase ---
 
+
 # Kernel to "get" (pull) data from a remote GPU. Used for the initial scatter.
 @triton.jit
-def get_kernel(remote_source_ptr, local_dest_ptr, num_elements, current_rank, remote_rank, heap_bases_ptr, BLOCK_SIZE: tl.constexpr):
+def get_kernel(
+    remote_source_ptr, local_dest_ptr, num_elements, current_rank, remote_rank, heap_bases_ptr, BLOCK_SIZE: tl.constexpr
+):
     pid = tl.program_id(axis=0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < num_elements
-    iris.get(remote_source_ptr + offsets, local_dest_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask)
+    iris.get(
+        remote_source_ptr + offsets, local_dest_ptr + offsets, current_rank, remote_rank, heap_bases_ptr, mask=mask
+    )
 
 
 def main():
@@ -55,7 +67,7 @@ def main():
 
     # --- Configuration ---
     Q = 256  # Total rows in the matrix
-    K = 4096 # Total columns
+    K = 4096  # Total columns
     dtype = torch.float32
     master_rank = 0
 
@@ -64,7 +76,7 @@ def main():
         if current_rank == master_rank:
             print(f"ERROR: Total rows ({Q}) must be divisible by the world size ({world_size}).")
         return
-    
+
     ROWS_PER_GPU = Q // world_size
 
     # --- Triton Kernel Configurations ---
@@ -90,19 +102,19 @@ def main():
     x_slice = shmem.empty((ROWS_PER_GPU, K), dtype=dtype)
     # Each rank allocates the full output buffer.
     y_global = shmem.zeros((Q, K), dtype=dtype)
-    
+
     shmem.barrier()
 
     # --- Step 1: Scatter ---
     # Each GPU pulls its assigned slice of rows from the master rank.
     print(f"[Rank {current_rank}] Scattering input: Getting my slice from Rank {master_rank}.")
-    
+
     # Calculate which slice of the global matrix this rank is responsible for.
     my_slice_in_global_x = x_global[current_rank * ROWS_PER_GPU : (current_rank + 1) * ROWS_PER_GPU, :]
-    
+
     get_kernel[comm_grid](
-        my_slice_in_global_x, # The remote source on the master GPU
-        x_slice,              # The local destination
+        my_slice_in_global_x,  # The remote source on the master GPU
+        x_slice,  # The local destination
         SLICE_NUMEL,
         current_rank,
         master_rank,
@@ -115,7 +127,7 @@ def main():
     # Each GPU computes softmax on its local slice.
     print(f"[Rank {current_rank}] Computing local softmax...")
     my_slice_in_global_y = y_global[current_rank * ROWS_PER_GPU : (current_rank + 1) * ROWS_PER_GPU, :]
-    
+
     softmax_kernel[softmax_grid](
         x_slice,
         my_slice_in_global_y,
@@ -132,7 +144,7 @@ def main():
     for remote_rank in range(world_size):
         if remote_rank == current_rank:
             continue
-        
+
         local_source_slice = y_global[current_rank * ROWS_PER_GPU : (current_rank + 1) * ROWS_PER_GPU, :]
         remote_dest_slice = y_global[current_rank * ROWS_PER_GPU : (current_rank + 1) * ROWS_PER_GPU, :]
 
@@ -159,8 +171,9 @@ def main():
             print("✅ Validation Successful! The distributed softmax result is correct.")
         else:
             print("❌ Validation FAILED! The result is incorrect.")
-    
+
     shmem.barrier()
+
 
 if __name__ == "__main__":
     main()
