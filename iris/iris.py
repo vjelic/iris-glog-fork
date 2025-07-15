@@ -8,7 +8,7 @@ from iris._mpi_helpers import (
     init_mpi,
     mpi_allgather,
     world_barrier,
-    mpi_broadcast_scalar,
+    mpi_broadcast_tensor,
 )
 from iris._hip import (
     set_device,
@@ -93,6 +93,9 @@ class Iris:
     def broadcast(self, source_rank, value):
         return mpi_broadcast_scalar(source_rank, value)
 
+    def broadcast_tensor(self, value, source_rank=0): 
+        return mpi_broadcast_tensor(value, root=source_rank)
+    
     def allocate(self, num_elements, dtype):
         self.log_debug(f"allocate: num_elements = {num_elements}, dtype = {dtype}")
 
