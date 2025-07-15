@@ -43,11 +43,15 @@ def _iris_all_gather_kernel(
         tl.store(gathered_data_ptr + dest_offsets, data, mask=mask)
 
 @triton.jit
+@triton.jit
 def _iris_split_kv_kernel(
     q_ptr, k_ptr, v_ptr, sm_scale, block_table_ptr, kv_len_ptr, intermediate_out_ptr,
     stride_q_bs, stride_q_h, stride_k_cache_bs, stride_k_cache_h, stride_v_cache_bs,
     stride_v_cache_h, stride_intermediate_bs, stride_intermediate_h,
-    stride_intermediate_split, stride_table_bs, kv_group_num: tl.constexpr,
+    stride_intermediate_split, stride_table_bs,
+    # Add these two new stride arguments
+    stride_k_cache_page, stride_v_cache_page,
+    kv_group_num: tl.constexpr,
     q_head_num: tl.constexpr, page_size: tl.constexpr, BLOCK_HEAD_DIM: tl.constexpr,
     BLOCK_N: tl.constexpr, BLOCK_H: tl.constexpr, NUM_KV_SPLITS: tl.constexpr
 ):
@@ -68,13 +72,37 @@ def _iris_split_kv_kernel(
     for start_n in range(split_kv_start, split_kv_end, BLOCK_N):
         offs_n = start_n + tl.arange(0, BLOCK_N)
         kv_page_number = tl.load(block_table_ptr + bid * stride_table_bs + offs_n // page_size, mask=offs_n < split_kv_end, other=0)
-        kv_loc = kv_page_number * page_size + offs_n % page_size
-        offs_cache_k = kv_loc[None, :] * stride_k_cache_bs + kv_hid * stride_k_cache_h + offs_d[:, None]
-        k = tl.load(k_ptr + offs_cache_k, mask=(offs_n[None, :] < split_kv_end) & (offs_d[:, None] < BLOCK_HEAD_DIM), other=0.0)
-        qk = tl.dot(q, k.to(q.dtype)) * sm_scale
-        qk = tl.where(mask_h[:, None] & (offs_n[None, :] < split_kv_end), qk, float("-inf"))
-        offs_cache_v = kv_loc[:, None] * stride_v_cache_bs + kv_hid * stride_v_cache_h + offs_d[None, :]
-        v = tl.load(v_ptr + offs_cache_v, mask=(offs_n[:, None] < split_kv_end) & (offs_d[None, :] < BLOCK_HEAD_DIM), other=0.0)
+        # kv_loc = kv_page_number * page_size + offs_n % page_size
+        # offs_cache_k = kv_loc[None, :] * stride_k_cache_bs + kv_hid * stride_k_cache_h + offs_d[:, None]
+        # k = tl.load(k_ptr + offs_cache_k, mask=(offs_n[None, :] < split_kv_end) & (offs_d[:, None] < BLOCK_HEAD_DIM), other=0.0)
+        # qk = tl.dot(q, k.to(q.dtype)) * sm_scale
+        # qk = tl.where(mask_h[:, None] & (offs_n[None, :] < split_kv_end), qk, float("-inf"))
+        # offs_cache_v = kv_loc[:, None] * stride_v_cache_bs + kv_hid * stride_v_cache_h + offs_d[None, :]
+        # v = tl.load(v_ptr + offs_cache_v, mask=(offs_n[:, None] < split_kv_end) & (offs_d[None, :] < BLOCK_HEAD_DIM), other=0.0)
+        # --- ADD THESE CORRECTED LINES ---
+        offs_n_seq = tl.arange(0, BLOCK_N)[:, None]
+        offs_d_head = tl.arange(0, BLOCK_HEAD_DIM)[None, :]
+
+        # Get the sequence offsets for the current block
+        cur_block_offs = start_n + offs_n_seq
+
+        # Load page numbers for the current block of sequence elements
+        kv_page_number = tl.load(block_table_ptr + bid * stride_table_bs + cur_block_offs // page_size,
+                                mask=cur_block_offs < split_kv_end, other=0)
+
+        # Calculate pointers for K cache
+        k_page_ptr = kv_page_number * stride_k_cache_page
+        k_block_ptr = (cur_block_offs % page_size) * stride_k_cache_bs
+        k_seq_ptr = k_ptr + k_page_ptr + k_block_ptr
+        k = tl.load(k_seq_ptr + (kv_hid * stride_k_cache_h) + offs_d_head,
+                    mask=(cur_block_offs < split_kv_end) & (offs_d_head < BLOCK_HEAD_DIM), other=0.0)
+
+        # Calculate pointers for V cache
+        v_page_ptr = kv_page_number * stride_v_cache_page
+        v_block_ptr = (cur_block_offs % page_size) * stride_v_cache_bs
+        v_seq_ptr = v_ptr + v_page_ptr + v_block_ptr
+        v = tl.load(v_seq_ptr + (kv_hid * stride_v_cache_h) + offs_d_head,
+                    mask=(cur_block_offs < split_kv_end) & (offs_d_head < BLOCK_HEAD_DIM), other=0.0)
         n_e_max = tl.maximum(tl.max(qk, 1), e_max)
         re_scale = tl.exp(e_max - n_e_max)
         p = tl.exp(qk - n_e_max[:, None])
@@ -113,7 +141,7 @@ def _iris_combine_local_kv_kernel(
             e_sum = e_sum * old_scale + exp_logic
             e_max = n_e_max
     offs_local_out_v = bid * stride_local_out_bs + hid * stride_local_out_h + offs_d
-    tl.store(local_out_ptr + offs_local_out_v, acc, mask=offs_d < BLOCK_HEAD_DIM)
+    tl.store(local_out_ptr + offs_local_out_v, acc / e_sum, mask=offs_d < BLOCK_HEAD_DIM)
     offs_local_out_logic = bid * stride_local_out_bs + hid * stride_local_out_h + BLOCK_HEAD_DIM
     tl.store(local_out_ptr + offs_local_out_logic, e_max + tl.log(e_sum))
 
@@ -174,12 +202,15 @@ class SpGQAFlashDecodeIris(torch.nn.Module):
         # STAGE A: Local Attention (all Q heads vs local KV shard)
         grid_stage1 = (batch_size, triton.cdiv(self.num_q_heads, 16), self.num_kv_splits)
         _iris_split_kv_kernel[grid_stage1](
-            q, k_cache, v_cache, self.scale, block_table, kv_lens_per_rank, self.intermediate_out,
-            q.stride(0), q.stride(1), k_cache.stride(0), k_cache.stride(2),
-            v_cache.stride(0), v_cache.stride(2), self.intermediate_out.stride(0), self.intermediate_out.stride(1),
-            self.intermediate_out.stride(2), block_table.stride(0), self.num_q_heads // self.num_kv_heads_per_rank,
-            self.num_q_heads, self.page_size, self.head_dim, 64, 16, self.num_kv_splits,
-        )
+    q, k_cache, v_cache, self.scale, block_table, kv_lens_per_rank, self.intermediate_out,
+    q.stride(0), q.stride(1), k_cache.stride(1), k_cache.stride(2),
+    v_cache.stride(1), v_cache.stride(2), self.intermediate_out.stride(0), self.intermediate_out.stride(1),
+    self.intermediate_out.stride(2), block_table.stride(0),
+    # Pass the new strides for the page dimension
+    k_cache.stride(0), v_cache.stride(0),
+    self.num_q_heads // self.num_kv_heads_per_rank,
+    self.num_q_heads, self.page_size, self.head_dim, 64, 16, self.num_kv_splits,
+)
         grid_stage2 = (batch_size, self.num_q_heads)
         _iris_combine_local_kv_kernel[grid_stage2](
             self.intermediate_out, self.local_out, kv_lens_per_rank,
@@ -189,6 +220,24 @@ class SpGQAFlashDecodeIris(torch.nn.Module):
         )
         self.shmem.barrier()
 
+        # <<< --- ADDED PRINT --- >>>
+        if self.rank == 0:
+            print("\n" + "~"*20 + f" [RANK 0] DEBUGGING STAGE A " + "~"*20)
+            local_val = self.local_out[0, 0, :self.head_dim]
+            local_logic = self.local_out[0, 0, self.head_dim]
+            # With all-ones inputs and scale=1.0, the value part should be 1.0.
+            # The logic part is score + log(sum(exp(score-score))), which is head_dim + log(seq_len_per_rank).
+            seq_len_per_rank = kv_lens_per_rank[0].item()
+            expected_logic = self.head_dim * self.scale + math.log(seq_len_per_rank)
+            print(f"--> After local combination (Stage A):")
+            print(f"    - Shape of local_out: {self.local_out.shape}")
+            print(f"    - First 5 values of value part (head 0): {local_val[:5]}")
+            print(f"    - Value part sum (should be close to head_dim): {torch.sum(local_val)}")
+            print(f"    - Logic value (head 0): {local_logic:.4f}")
+            print(f"    - Expected logic value: {expected_logic:.4f}")
+            print("~"*66 + "\n")
+
+
         # STAGE B: All-Gather local results
         n_elements_per_rank = self.local_out.numel()
         grid_allgather = (triton.cdiv(n_elements_per_rank, 1024),)
@@ -197,6 +246,18 @@ class SpGQAFlashDecodeIris(torch.nn.Module):
             n_elements_per_rank, self.rank, self.num_ranks, 1024,
         )
         self.shmem.barrier()
+        
+        # <<< --- ADDED PRINT --- >>>
+        if self.rank == 0:
+            print("\n" + "~"*20 + f" [RANK 0] DEBUGGING STAGE B " + "~"*20)
+            print(f"--> After All-Gather (Stage B):")
+            print(f"    - Shape of gathered_buffer: {self.gathered_buffer.shape}")
+            # Check if data from rank 0 and rank 1 are identical, as expected
+            if self.num_ranks > 1:
+                are_shards_equal = torch.allclose(self.gathered_buffer[0], self.gathered_buffer[1])
+                print(f"    - Data from Rank 0 and Rank 1 are identical: {are_shards_equal}")
+            print("~"*66 + "\n")
+
 
         # STAGE C: Final global combination
         grid_stage3 = (batch_size, self.num_q_heads)
@@ -252,11 +313,18 @@ def final_ref_paged_attn(
     v = v_cache_full[block_indices].view(-1, total_kv_heads, head_size)[:global_kv_len]
     
     if num_q_heads != total_kv_heads:
-        # --- FIX IS HERE ---
-        # The repeat factor for `v` should be the same as for `k`.
         num_groups = num_q_heads // total_kv_heads
         k = torch.repeat_interleave(k, num_groups, dim=1)
         v = torch.repeat_interleave(v, num_groups, dim=1)
+        
+    # <<< --- ADDED PRINT --- >>>
+    print("\n" + "~"*20 + " [REF] DEBUGGING " + "~"*28)
+    print("--> Inside Reference Implementation:")
+    print(f"    - Reconstructed K shape (after repeat): {k.shape}")
+    print(f"    - Reconstructed V shape (after repeat): {v.shape}")
+    print(f"    - Is K tensor all ones? {torch.all(k == 1.0)}")
+    print(f"    - Is V tensor all ones? {torch.all(v == 1.0)}")
+    print("~"*66 + "\n")
     
     q_for_einsum = q.unsqueeze(0)
     attn_scores = torch.einsum("qhd,khd->hqk", q_for_einsum, k).float() * scale
@@ -308,8 +376,8 @@ if __name__ == "__main__":
     
     # --- Correctness Check ---
     if rank == 0:
-        print(f"[RANK {rank}] --- Gathering data for correctness check ---")
-        
+        print(f"\n[RANK {rank}] --- Gathering data for correctness check ---")
+    
     k_list_flat = shmem.empty([world_size * k_cache_shard.numel()], dtype=k_cache_shard.dtype)
     v_list_flat = shmem.empty([world_size * v_cache_shard.numel()], dtype=v_cache_shard.dtype)
     bt_list_flat = shmem.empty([world_size * block_table_shard.numel()], dtype=block_table_shard.dtype)
@@ -336,15 +404,16 @@ if __name__ == "__main__":
         output_single = output[0]
         
         print("\n" + "="*50)
-        print("Distributed Implementation Output (first 5 values of first head):")
-        print(output_single[0, :])
+        print("Distributed Implementation Output (first 5 of first head):")
+        print(output_single[0, :5])
         print("~"*50)
-        print("Reference Implementation Output (first 5 values of first head):")
-        print(ref_output[0, :])
+        print("Reference Implementation Output (first 5 of first head):")
+        print(ref_output[0, :5])
         print("="*50 + "\n")
         
         try:
             # Both outputs should be tensors of all ones.
+            # Using a slightly more forgiving tolerance for float16 calculations
             torch.testing.assert_close(output_single, torch.ones_like(output_single), atol=1e-2, rtol=1e-2)
             torch.testing.assert_close(ref_output, torch.ones_like(ref_output), atol=1e-2, rtol=1e-2)
             print("\n✅ Correctness Test Passed!")
