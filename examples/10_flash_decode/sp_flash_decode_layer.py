@@ -1,38 +1,8 @@
-################################################################################
-#
-# Copyright (c) 2025 ByteDance Ltd. and/or its affiliates
-#
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files
-# (the "Software"), to deal in the Software without restriction,
-# including without limitation the rights to use, copy, modify, merge,
-# publish, distribute, sublicense, and/or sell copies of the Software,
-# and to permit persons to whom the Software is furnished to do so,
-# subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be
-# included in all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-#
-################################################################################
 import torch
 import os
-# from triton_dist.kernels.nvidia import (create_fast_allgather_context, get_triton_combine_kv_algo_info,
-#                                         gqa_fwd_batch_decode_intra_rank_aot, gqa_fwd_batch_decode_intra_rank,
-#                                         kernel_inter_rank_gqa_fwd_batch_decode_combine_kv)
-# from triton_dist.utils import nvshmem_free_tensor_sync, nvshmem_create_tensor
-# from .low_latency_allgather_layer import AllGatherLayer
-
+import numpy as np
+import iris
 from decode_kernels import (gqa_fwd_batch_decode_intra_rank, kernel_inter_rank_gqa_fwd_batch_decode_combine_kv)
-
-
 
 
 class SpGQAFlashDecodeAttention(torch.nn.Module):
@@ -56,24 +26,18 @@ class SpGQAFlashDecodeAttention(torch.nn.Module):
         self.kv_split = 32
         self.max_allowed_batch = max_allowed_batch
         self.stages = stages
-        self.iris_instance = iris.Iris(heap_size=1 << 30)  # Example heap size, 1GB
 
-        # allgather
-        # self.max_allgather_buffer_size = self.num_ranks * self.num_q_heads * self.v_head_dim * 8  # bytes
-        # self.ag_layer = AllGatherLayer(self.num_nodes, self.num_ranks, self.rank,
-        #                                max_buffer_size=self.max_allgather_buffer_size, stages=self.stages)
-        # self.ag_buffer = nvshmem_create_tensor((
-        #     self.stages,
-        #     self.max_allgather_buffer_size,
-        # ), torch.int8)
+        self.iris_instance = iris.Iris(heap_size=1 << 30) 
 
-        # track buffer size
         self.count_less_than_half = 0
         self.shrink_buffer_threshold = thrink_buffer_threshold
 
-    # def finalize(self):
-    #     self.ag_layer.finalize()
-    #     nvshmem_free_tensor_sync(self.ag_buffer)
+    
+        max_output_combine_elements = max_allowed_batch * num_q_heads * (v_head_dim + 1)
+        self.iris_allgather_buffer_elements = max_output_combine_elements * self.num_ranks
+        self.iris_allgather_buffer = self.iris_instance.allocate(
+            self.iris_allgather_buffer_elements, dtype=torch.float16
+        )
 
     def forward(self, q, k_cache, v_cache, global_kv_lens, block_table):
         """
@@ -92,49 +56,25 @@ class SpGQAFlashDecodeAttention(torch.nn.Module):
         output_combine = torch.empty([batch, self.num_q_heads, self.v_head_dim + 1], dtype=q.dtype, device=q.device)
         final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
 
-        current_stream = torch.cuda.current_stream()
-       
+        current_stream = torch.cuda.current_stream() 
+        
         gqa_fwd_batch_decode_intra_rank(q, k_cache, v_cache, self.workspace, [1] * q.shape[0],
-                                            global_kv_lens[self.rank], block_table, self.scale, soft_cap=self.soft_cap,
-                                            output_split=output_split, output_combine=output_combine,
-                                            kv_split=self.kv_split)
+                                        global_kv_lens[self.rank], block_table, self.scale, soft_cap=self.soft_cap,
+                                        output_split=output_split, output_combine=output_combine,
+                                        kv_split=self.kv_split)
         ################
         # allgather part
-        # nbytes_per_rank = output_combine.nbytes
-        # nbytes = nbytes_per_rank * self.num_ranks
+        
+        output_combine_numpy_flattened = output_combine.cpu().numpy().astype(np.float32).flatten()
+        all_gathered_numpy_flattened = iris._mpi_helpers.mpi_allgather(output_combine_numpy_flattened)
 
-        # if nbytes >= self.max_allgather_buffer_size:
-        #     self.max_allgather_buffer_size *= 2
-        #     # free buffer and reallocate
-        #     self.finalize()
-        #     self.allgather_ctx = create_fast_allgather_context(self.rank, self.node, self.num_ranks, self.num_nodes,
-        #                                                        max_buffer_size=self.max_allgather_buffer_size)
-        #     self.ag_buffer = nvshmem_create_tensor((self.stages, self.max_allgather_buffer_size), torch.int8)
-        # if nbytes < self.max_allgather_buffer_size // 2:
-        #     self.count_less_than_half += 1
-        # if self.count_less_than_half >= self.shrink_buffer_threshold:
-        #     self.max_allgather_buffer_size = self.max_allgather_buffer_size // 2
-        #     # free buffer and reallocate
-        #     self.finalize()
-        #     self.allgather_ctx = create_fast_allgather_context(self.rank, self.node, self.num_ranks, self.num_nodes,
-        #                                                        max_buffer_size=self.max_allgather_buffer_size)
-        #     self.ag_buffer = nvshmem_create_tensor((self.stages, self.max_allgather_buffer_size), torch.int8)
-        #     # reset counter
-        #     self.count_less_than_half = 0
 
-        # local copy
-        index_start, index_end = nbytes_per_rank * self.rank, nbytes_per_rank * (self.rank + 1)
-        self.ag_buffer[self.ag_layer.signal_target % self.stages][index_start:index_end].copy_(
-            output_combine.view(-1).view(torch.int8))
-        ag_buffer = self.ag_layer.forward_push_2d_ll(self.ag_buffer[self.ag_layer.signal_target % self.stages][:nbytes])
+        all_ranks_output_combine = torch.from_numpy(all_gathered_numpy_flattened).to(q.device).view(
+            self.num_ranks, batch, self.num_q_heads, self.v_head_dim + 1
+        ).to(q.dtype)
 
         ################
         # final combine
-        all_ranks_output_combine = ag_buffer.view(output_combine.dtype)
-        all_ranks_output_combine = all_ranks_output_combine.view(
-            [self.num_ranks, batch, self.num_q_heads, self.v_head_dim + 1])
-
-       
         kernel_inter_rank_gqa_fwd_batch_decode_combine_kv[(batch, self.num_q_heads, 1)](
             all_ranks_output_combine, final_output, global_kv_lens, batch, self.num_q_heads,
             all_ranks_output_combine.stride(1),  # batch
