@@ -14,6 +14,8 @@ concurrency:
 jobs:
   test-iris:
     runs-on: ubuntu-latest
+    env:
+      DIGITALOCEAN_API_URL: ${{ secrets.DIGITALOCEAN_API_URL }}
     
     steps:
     - name: Checkout code
@@ -25,29 +27,32 @@ jobs:
         token: ${{ secrets.DEV_CLOUD_KEY }}
 
     - name: Install jq
-      timeout-minutes: 20
       run: |
         sudo apt-get update
         sudo apt-get install -y jq
 
     - name: Create Droplet
       id: create
+      env:
+        DIGITALOCEAN_API_URL: ${{ secrets.DIGITALOCEAN_API_URL }}
       run: |
         DROPLET_NAME="iris-$(date +%s)"
         
         # Create droplet and capture JSON output
         DROPLET_JSON=$(doctl compute droplet create \
           --image 188571990 \
-          --size gpu-mi300x8-1536gb \
+          --size ${{ secrets.DIGITALOCEAN_SIZE }} \
           --region atl1 \
           --ssh-keys ${{ secrets.SSH_KEY_ID }} \
           "$DROPLET_NAME" \
           -o json \
-          --wait)
+          --wait 2>&1)
         
         # Check if droplet creation was successful
         if [ $? -ne 0 ]; then
           echo "❌ Failed to create droplet"
+          echo "Error details:"
+          echo "$DROPLET_JSON"
           exit 1
         fi
         
@@ -200,6 +205,8 @@ jobs:
 
     - name: Auto-destroy droplet after use
       if: always()
+      env:
+        DIGITALOCEAN_API_URL: ${{ secrets.DIGITALOCEAN_API_URL }}
       run: |
         echo "🗑️ Auto-destroying droplet ${{ steps.create.outputs.droplet_id }}..."
         doctl compute droplet delete ${{ steps.create.outputs.droplet_id }} --force
