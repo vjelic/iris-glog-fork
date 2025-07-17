@@ -32,8 +32,10 @@ import numpy as np
 import torch
 import iris
 
-from utils import (perf_func, dist_print, group_profile, sleep_async)
+from utils import (perf_func, dist_print, group_profile)
+from sp_flash_decode_layer_iris import SpGQAFlashDecodeAttentionIrisAG
 from sp_flash_decode_layer import SpGQAFlashDecodeAttention
+from sp_flash_decode_layer_mpi import SpGQAFlashDecodeAttentionMPI
 
 
 ALL_TESTS = {}
@@ -129,7 +131,7 @@ def test_triton_decode_with_paged_kv(args) -> None:
     dtype = torch.float16
     soft_cap = 0
 
-    _iris = iris.iris() 
+    iris_instance = args.iris_instance
 
     torch.set_default_device("cuda")
 
@@ -142,7 +144,15 @@ def test_triton_decode_with_paged_kv(args) -> None:
     NUM_BLOCKS_PER_RANK = 128 * 12 + 1
     NUM_BLOCKS = NUM_BLOCKS_PER_RANK * args.num_ranks
 
-    ths_op = SpGQAFlashDecodeAttention(args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+    # ths_op = SpGQAFlashDecodeAttentionIrisAG(iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+    #                                    args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+    #                                    head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+    #                                    max_allowed_batch=1, thrink_buffer_threshold=500, stages=20)
+    # ths_op = SpGQAFlashDecodeAttention(args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+    #                                    args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+    #                                    head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+    #                                    max_allowed_batch=1, thrink_buffer_threshold=500, stages=20)
+    ths_op = SpGQAFlashDecodeAttentionMPI(iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
                                        args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
                                        head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
                                        max_allowed_batch=1, thrink_buffer_threshold=500, stages=20)
@@ -155,8 +165,8 @@ def test_triton_decode_with_paged_kv(args) -> None:
             query = torch.empty(num_seqs, num_query_heads, head_size, dtype=dtype)
             key_value_cache = torch.empty(NUM_BLOCKS, 2, block_size, num_kv_heads, head_size, dtype=dtype)
         
-        query = torch.from_numpy(_iris.broadcast_tensor(query, source_rank=0)).to(query.device)
-        key_value_cache = torch.from_numpy(_iris.broadcast_tensor(key_value_cache, source_rank=0)).to(key_value_cache.device)
+        query = torch.from_numpy(iris_instance.broadcast_tensor(query, source_rank=0)).to(query.device)
+        key_value_cache = torch.from_numpy(iris_instance.broadcast_tensor(key_value_cache, source_rank=0)).to(key_value_cache.device)
 
         # torch.manual_seed(3 + args.rank) 
         # print("SEED:", 3 + args.rank)
@@ -242,86 +252,166 @@ def test_triton_decode_with_paged_kv(args) -> None:
             max_diff = torch.max(torch.abs(output - ref_output))
             print(f"TEST FAILED for Rank {args.rank}: {e}. Max absolute difference: {max_diff}")
 
-    _iris.barrier()
-
+    iris_instance.barrier()
 
 @register_test("perf")
-def perf_decode(args):
-    _iris = iris.iris() 
+def perf_decode_iris(args):
+    """
+    Benchmarks the SpGQAFlashDecodeAttentionIrisAG layer across various, extremely large sequence lengths.
+    """
+    kv_len_configs = [131072, 262144, 524288, 1048576]
 
-    for kv_len_per_rank in [2**i for i in range(10, 11)]:
-        kv_lens_per_rank = [kv_len_per_rank]
+    for kv_len_per_rank in kv_len_configs:
         num_heads = 96
         head_size = 128
         block_size = 1
         dtype = torch.float16
         soft_cap = 0
+        num_seqs = 1 
 
         torch.set_default_device("cuda")
 
-        num_seqs = len(kv_lens_per_rank)
+        num_query_heads = num_heads
+        num_kv_heads = num_query_heads // 8
+        assert num_query_heads % num_kv_heads == 0, "Number of query heads must be divisible by KV heads."
+        scale = head_size**-0.5
+
+        NUM_BLOCKS_PER_RANK = kv_len_per_rank + 1
+        
+        dist_print(f"\n----- Benchmarking (rank {args.rank}) | KV Length per Rank: {kv_len_per_rank} -----", allowed_ranks="all")
+
+        # ths_op = SpGQAFlashDecodeAttentionIrisAG(
+        #     args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+        #     args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+        #     head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+        #     max_allowed_batch=num_seqs, thrink_buffer_threshold=500, stages=20
+        # )
+        
+        # ths_op = SpGQAFlashDecodeAttention(
+        #     args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+        #     args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+        #     head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+        #     max_allowed_batch=num_seqs, thrink_buffer_threshold=500, stages=20
+        # )
+        
+        ths_op = SpGQAFlashDecodeAttentionMPI(
+            args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+            args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+            head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+            max_allowed_batch=num_seqs, thrink_buffer_threshold=500, stages=20
+        )
+
+        query = torch.randn(num_seqs, num_query_heads, head_size, dtype=dtype)
+        key_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
+        value_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
+
+        max_num_blocks_per_seq_per_rank = NUM_BLOCKS_PER_RANK
+        block_tables_this_rank = torch.randint(
+            0, NUM_BLOCKS_PER_RANK, (num_seqs, max_num_blocks_per_seq_per_rank), dtype=torch.int32
+        )
+        
+        kv_lens_this_rank_list = [kv_len_per_rank]
+        kv_lens_tensor = torch.tensor(kv_lens_this_rank_list, dtype=torch.int32)
+        global_kv_lens_tensor = torch.cat([kv_lens_tensor.view(1, -1) for _ in range(args.num_ranks)], dim=0)
+
+        args.iris_instance.barrier()
+        torch.cuda.synchronize()
+
+        def func_to_benchmark():
+            return ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+
+        _, time_ms = perf_func(func=func_to_benchmark, iters=100, warmup_iters=20)
+
+        args.iris_instance.barrier()
+        
+        dist_print(f"✅ Result: KV len={kv_len_per_rank}, Avg GPU time={time_ms:.3f} ms", allowed_ranks=[0])
+
+@register_test("compare")
+def perf_decode_comparison(args):
+    """
+    Benchmarks and compares SpGQAFlashDecodeAttentionIrisAG against a standard
+    SpGQAFlashDecodeAttention implementation at extreme scales.
+    """
+    kv_len_configs = [131072, 262144, 524288, 1048576]
+    
+    results_summary = []
+
+    for kv_len_per_rank in kv_len_configs:
+        num_heads = 96
+        head_size = 128
+        block_size = 1
+        dtype = torch.float16
+        soft_cap = 0
+        num_seqs = 1
+        torch.set_default_device("cuda")
+
         num_query_heads = num_heads
         num_kv_heads = num_query_heads // 8
         assert num_query_heads % num_kv_heads == 0
         scale = head_size**-0.5
 
-        NUM_BLOCKS_PER_RANK = kv_lens_per_rank[0] + 1
-        NUM_BLOCKS = NUM_BLOCKS_PER_RANK * args.num_ranks 
+        NUM_BLOCKS_PER_RANK = kv_len_per_rank + 1
+        
+        dist_print(f"\n----- Comparing @ KV Len per Rank: {kv_len_per_rank} -----", allowed_ranks=[0])
+
+        query = torch.randn(num_seqs, num_query_heads, head_size, dtype=dtype)
+        key_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
+        value_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
+        max_num_blocks_per_seq_per_rank = NUM_BLOCKS_PER_RANK
+        block_tables_this_rank = torch.randint(0, NUM_BLOCKS_PER_RANK, (num_seqs, max_num_blocks_per_seq_per_rank), dtype=torch.int32)
+        kv_lens_tensor = torch.tensor([kv_len_per_rank], dtype=torch.int32)
+        global_kv_lens_tensor = torch.cat([kv_lens_tensor.view(1, -1) for _ in range(args.num_ranks)], dim=0)
+        
+        args.iris_instance.barrier()
+        torch.cuda.synchronize()
+
+
+
+        dist_print("Benchmarking: SpGQAFlashDecodeAttentionMPI...", allowed_ranks=[0])
+        ths_op_std = SpGQAFlashDecodeAttentionMPI(args.iris_instance,
+            args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+            args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+            head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+            max_allowed_batch=num_seqs, thrink_buffer_threshold=500, stages=20
+        )
+        def func_to_benchmark_std():
+            return ths_op_std(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+        _, time_std = perf_func(func=func_to_benchmark_std, iters=100, warmup_iters=20)
+        args.iris_instance.barrier()
+        
+        dist_print("Benchmarking: SpGQAFlashDecodeAttentionIrisAG...", allowed_ranks=[0])
+        ths_op_iris = SpGQAFlashDecodeAttentionIrisAG(
+            args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+            args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+            head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+            max_allowed_batch=num_seqs, thrink_buffer_threshold=500, stages=20
+        )
+        def func_to_benchmark_iris():
+            return ths_op_iris(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+        _, time_iris = perf_func(func=func_to_benchmark_iris, iters=100, warmup_iters=20)
+        args.iris_instance.barrier()
 
         if args.rank == 0:
-            query = torch.randn(num_seqs, num_query_heads, head_size, dtype=dtype)
-            key_value_cache = torch.randn(NUM_BLOCKS, 2, block_size, num_kv_heads, head_size, dtype=dtype)
-        else:
-            query = torch.empty(num_seqs, num_query_heads, head_size, dtype=dtype)
-            key_value_cache = torch.empty(NUM_BLOCKS, 2, block_size, num_kv_heads, head_size, dtype=dtype)
-        
-        query = torch.from_numpy(_iris.broadcast_tensor(query, source_rank=0)).to(query.device)
-        key_value_cache = torch.from_numpy(_iris.broadcast_tensor(key_value_cache, source_rank=0)).to(key_value_cache.device)
+            speedup = time_std / time_iris if time_iris > 0 and time_std > 0 else 0.0
+            results_summary.append({
+                "kv_len": kv_len_per_rank,
+                "iris_ms": time_iris,
+                "std_ms": time_std,
+                "speedup": speedup
+            })
+            print(f"Result (KV len={kv_len_per_rank}):")
+            print(f"   - IrisAG:   {time_iris:.3f} ms")
+            print(f"   - Standard: {time_std:.3f} ms")
+            print(f"   - Relative Perf (Standard / IrisAG): {speedup:.2f}x")
 
-        torch.manual_seed(3 + args.rank) 
-        
-        key_cache = key_value_cache[:, 0, :, :, :].contiguous()
-        value_cache = key_value_cache[:, 1, :, :, :].contiguous()
-        key_cache_this_rank = key_cache[args.rank * NUM_BLOCKS_PER_RANK:(args.rank + 1) *
-                                        NUM_BLOCKS_PER_RANK].contiguous()
-        value_cache_this_rank = value_cache[args.rank * NUM_BLOCKS_PER_RANK:(args.rank + 1) *
-                                             NUM_BLOCKS_PER_RANK].contiguous()
-
-        max_num_blocks_per_seq_per_rank = NUM_BLOCKS_PER_RANK
-        block_tables_list = [
-            torch.randint(0, NUM_BLOCKS_PER_RANK, (num_seqs, max_num_blocks_per_seq_per_rank), dtype=torch.int32)
-            for i in range(args.num_ranks)
-        ]
-        block_tables_this_rank = block_tables_list[args.rank]
-
-        kv_lens_tensor = torch.tensor(kv_lens_per_rank, dtype=torch.int32, device=query.device)
-        global_kv_lens_tensor = torch.cat([kv_lens_tensor.view(1, -1) for _ in range(args.num_ranks)], dim=0)
-
-        ths_op = SpGQAFlashDecodeAttention(args.rank, args.rank // args.local_num_ranks, args.num_ranks,
-                                           args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads,
-                                           head_size, head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
-                                           max_allowed_batch=1, thrink_buffer_threshold=500)
-        torch.cuda.synchronize()
-        _iris.barrier()
-
-        def func():
-            return ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor,
-                            block_tables_this_rank)
-        perf_func(func, iters=100, warmup_iters=20)
-        
-        
-        _iris.barrier()
-        with group_profile(f"sp_flash_decode_kv{kv_len_per_rank}", do_prof=args.profile):
-            sleep_async(1000)  # in case CPU bound
-            _, time_ms = perf_func(
-                func,
-                warmup_iters=20,
-                iters=100,
-            )
-        torch.distributed.barrier(args.default_group)
-        dist_print(f"rank: {args.rank} KV len={kv_lens_per_rank[0]} Performance is {time_ms} ms", allowed_ranks="all",
-                   need_sync=True)
-
+    if args.rank == 0 and results_summary:
+        print("\n\n--- Final Performance Comparison Summary ---")
+        print("-" * 75)
+        print(f"{'KV Len/GPU':<15} | {'IrisAG (ms)':<15} | {'Standard (ms)':<15} | {'Relative Perf':<15}")
+        print("-" * 75)
+        for r in results_summary:
+            print(f"{r['kv_len']:<15} | {r['iris_ms']:<15.3f} | {r['std_ms']:<15.3f} | {r['speedup']:.2f}x")
+        print("-" * 75)
 
 if __name__ == "__main__":
     RANK = int(os.environ.get("RANK", 0))
@@ -337,6 +427,7 @@ if __name__ == "__main__":
     args.num_ranks = _iris_global.get_num_ranks()
     args.local_rank = LOCAL_RANK
     args.local_num_ranks = LOCAL_WORLD_SIZE
+    args.iris_instance = _iris_global
     
     if args.list:
         help()
