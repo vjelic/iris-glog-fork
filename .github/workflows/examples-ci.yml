@@ -41,16 +41,18 @@ jobs:
         # Create droplet and capture JSON output
         DROPLET_JSON=$(doctl compute droplet create \
           --image 188571990 \
-          --size ${{ secrets.DIGITALOCEAN_SIZE }} \
+          --size "${{ secrets.DIGITALOCEAN_SIZE }}" \
           --region atl1 \
-          --ssh-keys ${{ secrets.SSH_KEY_ID }} \
+          --ssh-keys "${{ secrets.SSH_KEY_ID }}" \
           "$DROPLET_NAME" \
           -o json \
           --wait 2>&1)
         
+        DROPLET_EXIT_CODE=$?
+        
         # Check if droplet creation was successful
-        if [ $? -ne 0 ]; then
-          echo "❌ Failed to create droplet"
+        if [ $DROPLET_EXIT_CODE -ne 0 ]; then
+          echo "❌ Failed to create droplet (exit code: $DROPLET_EXIT_CODE)"
           echo "Error details:"
           echo "$DROPLET_JSON"
           exit 1
@@ -137,8 +139,8 @@ jobs:
           # Create results directory
           mkdir -p /iris_results
           
-          # Run the Iris examples
-          ./.github/workflows/scripts/examples.sh
+          # Run pytest tests
+          pytest tests/ -v
         "
 
     - name: Download test outputs
@@ -152,48 +154,9 @@ jobs:
         tar -czf iris_test_outputs.tar.gz -C test_outputs .
         echo "✅ Test outputs archived as iris_test_outputs.tar.gz"
         
-        # Print test results summary with GitHub Actions annotations
+        # Print test results summary
         echo "📊 Iris Test Results Summary:"
-        
-        # Check each test result by parsing the success field
-        check_test_result() {
-          local file="$1"
-          local test_name="$2"
-          if [ -f "$file" ]; then
-            if jq -e '.success == true' "$file" >/dev/null 2>&1; then
-              echo "::notice::✅ $test_name: PASSED"
-              return 0
-            else
-              echo "::warning::❌ $test_name: FAILED"
-              return 1
-            fi
-          else
-            echo "::warning::❌ $test_name: FAILED (file not found)"
-            return 1
-          fi
-        }
-        
-        # Track overall success
-        overall_success=true
-        
-        check_test_result "./test_outputs/iris_results/load_bench.json" "Load" || overall_success=false
-        check_test_result "./test_outputs/iris_results/store_bench.json" "Store" || overall_success=false
-        check_test_result "./test_outputs/iris_results/all_load_bench.json" "All Load" || overall_success=false
-        check_test_result "./test_outputs/iris_results/all_store_bench.json" "All Store" || overall_success=false
-        check_test_result "./test_outputs/iris_results/atomic_add_bench.json" "Atomic Add" || overall_success=false
-        check_test_result "./test_outputs/iris_results/atomic_xchg_bench.json" "Atomic Xchg" || overall_success=false
-        #check_test_result "./test_outputs/iris_results/message_passing_load_store.json" "Message Passing Load Store" || overall_success=false
-        #check_test_result "./test_outputs/iris_results/message_passing_put.json" "Message Passing Put" || overall_success=false
-        check_test_result "./test_outputs/iris_results/gemm_all_scatter_bench.json" "GEMM All Scatter" || overall_success=false
-        check_test_result "./test_outputs/iris_results/gemm_atomics_all_reduce_bench.json" "GEMM Atomics All Reduce" || overall_success=false
-        check_test_result "./test_outputs/iris_results/gemm_one_shot_all_reduce_bench.json" "GEMM One Shot All Reduce" || overall_success=false
-        
-        echo ""
-        if [ "$overall_success" = true ]; then
-          echo "::notice::🎯 All Iris tests PASSED! ✅"
-        else
-          echo "::error::⚠️ Some Iris tests FAILED! ❌"
-        fi
+        echo "Pytest tests completed. Check the logs above for detailed results."
 
     - name: Upload test outputs as artifact
       if: always()
