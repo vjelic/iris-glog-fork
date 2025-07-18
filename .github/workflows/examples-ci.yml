@@ -37,6 +37,7 @@ jobs:
       env:
         DIGITALOCEAN_API_URL: ${{ secrets.DIGITALOCEAN_API_URL }}
       with:
+        timeout_minutes: 5
         max_attempts: 10
         retry_wait_seconds: 60
         command: |
