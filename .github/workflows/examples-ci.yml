@@ -33,60 +33,53 @@ jobs:
 
     - name: Create Droplet
       id: create
+      uses: nick-fields/retry@v3
       env:
         DIGITALOCEAN_API_URL: ${{ secrets.DIGITALOCEAN_API_URL }}
-      run: |
-        DROPLET_NAME="iris-$(date +%s)"
-        
-        # Create droplet and capture error output
-        DROPLET_JSON=$(doctl compute droplet create \
-          --image 188571990 \
-          --size "${{ secrets.DIGITALOCEAN_SIZE }}" \
-          --region atl1 \
-          --ssh-keys "${{ secrets.SSH_KEY_ID }}" \
-          "$DROPLET_NAME" \
-          -o json \
-          --wait 2>&1)
-        
-        DROPLET_EXIT_CODE=$?
-        
-        # Check if droplet creation was successful
-        if [ $DROPLET_EXIT_CODE -ne 0 ]; then
-          echo "$DROPLET_JSON"
-          exit 1
-        fi
-        
-        # Validate that we got valid JSON
-        if ! echo "$DROPLET_JSON" | jq . >/dev/null 2>&1; then
-          echo "❌ Invalid JSON response from doctl"
-          echo "Raw response:"
-          echo "$DROPLET_JSON"
-          exit 1
-        fi
-        
-        # Extract droplet ID and IP with error checking
-        DROPLET_ID=$(echo "$DROPLET_JSON" | jq -r '.[0].id // empty')
-        PUBLIC_IP=$(echo "$DROPLET_JSON" | jq -r '.[0].networks.v4[] | select(.type=="public") | .ip_address // empty')
-        
-        if [ -z "$DROPLET_ID" ]; then
-          echo "❌ Failed to extract droplet ID from response"
-          echo "JSON response:"
-          echo "$DROPLET_JSON"
-          exit 1
-        fi
-        
-        if [ -z "$PUBLIC_IP" ]; then
-          echo "❌ Failed to extract public IP from response"
-          echo "JSON response:"
-          echo "$DROPLET_JSON"
-          exit 1
-        fi
-        
-        # Set outputs for other steps
-        echo "droplet_id=$DROPLET_ID" >> $GITHUB_OUTPUT
-        echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
-        
-        echo "✅ Droplet created successfully!"
+      with:
+        max_attempts: 10
+        retry_wait_seconds: 60
+        command: |
+          DROPLET_NAME="iris-$(date +%s)"
+          
+          # Create droplet and capture error output
+          DROPLET_JSON=$(doctl compute droplet create \
+            --image 188571990 \
+            --size "${{ secrets.DIGITALOCEAN_SIZE }}" \
+            --region atl1 \
+            --ssh-keys "${{ secrets.SSH_KEY_ID }}" \
+            "$DROPLET_NAME" \
+            -o json \
+            --wait 2>&1)
+          
+          DROPLET_EXIT_CODE=$?
+          
+          # Check if droplet creation was successful
+          if [ $DROPLET_EXIT_CODE -ne 0 ]; then
+            echo "$DROPLET_JSON"
+            exit 1
+          fi
+          
+          # Validate that we got valid JSON
+          if ! echo "$DROPLET_JSON" | jq . >/dev/null 2>&1; then
+            echo "$DROPLET_JSON"
+            exit 1
+          fi
+          
+          # Extract droplet ID and IP with error checking
+          DROPLET_ID=$(echo "$DROPLET_JSON" | jq -r '.[0].id // empty')
+          PUBLIC_IP=$(echo "$DROPLET_JSON" | jq -r '.[0].networks.v4[] | select(.type=="public") | .ip_address // empty')
+          
+          if [ -z "$DROPLET_ID" ] || [ -z "$PUBLIC_IP" ]; then
+            echo "$DROPLET_JSON"
+            exit 1
+          fi
+          
+          # Set outputs for other steps
+          echo "droplet_id=$DROPLET_ID" >> $GITHUB_OUTPUT
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          
+          echo "✅ Droplet created successfully!"
 
     - name: Setup SSH key
       run: |
