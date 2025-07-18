@@ -134,7 +134,7 @@ jobs:
           source iris_env/bin/activate
 
           pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm6.4
-          pip3 install -e .
+          pip install -e '.[dev]'
           
           # Create results directory
           mkdir -p /iris_results
