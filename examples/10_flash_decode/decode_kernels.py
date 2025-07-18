@@ -451,3 +451,71 @@ def kernel_inter_rank_gqa_fwd_batch_decode_combine_kv(
         acc / e_sum,
         mask=mask_d,
     )
+
+@triton.jit
+def kernel_fused_wait_and_combine(
+    All_Ranks_Mid_O,
+    o,
+    B_Seqlens,
+    signal_flags_ptr,
+    batch,
+    q_heads,
+    stride_mid_ob,
+    stride_mid_oh,
+    stride_mid_os,
+    stride_obs,
+    stride_oh,
+    my_rank: tl.constexpr,
+    NUM_KV_SPLITS: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+    Lv: tl.constexpr,
+    iteration_id: tl.constexpr,
+):
+    cur_batch = tl.program_id(0)
+    cur_head = tl.program_id(1)
+
+    offs_d = tl.arange(0, BLOCK_DV)
+    mask_d = offs_d < Lv
+
+    cur_batch_seq_len_ptr = B_Seqlens + cur_batch
+
+    e_sum = 0.0
+    e_max = -float("inf")
+    acc = tl.zeros([BLOCK_DV], dtype=tl.float32)
+
+    for source_rank_id in range(0, NUM_KV_SPLITS):
+        flag_index = my_rank * NUM_KV_SPLITS + source_rank_id
+        
+        while tl.load(signal_flags_ptr + flag_index, cache_modifier=".ca") <= iteration_id:
+            pass
+        # while tl.load(signal_flags_ptr + flag_index, cache_modifier=".ca") == 0:
+        #     pass
+
+        effective_kv_len = tl.load(cur_batch_seq_len_ptr + source_rank_id * batch)
+        
+        if effective_kv_len > 0:
+            base_ptr = cur_batch * stride_mid_ob + cur_head * stride_mid_oh + source_rank_id * stride_mid_os
+            offs_v = base_ptr + offs_d
+            offs_logic = base_ptr + Lv
+
+            tv = tl.load(All_Ranks_Mid_O + offs_v, mask=mask_d, other=0.0)
+            tlogic = tl.load(All_Ranks_Mid_O + offs_logic)
+            
+            n_e_max = tl.maximum(tlogic, e_max)
+            old_scale = libdevice.fast_expf(e_max - n_e_max)
+            acc *= old_scale
+            
+            exp_logic = libdevice.fast_expf(tlogic - n_e_max)
+            acc += exp_logic * tv
+
+            e_sum = e_sum * old_scale + exp_logic
+            e_max = n_e_max
+
+    final_out = acc / e_sum
+    final_out = tl.where(e_sum == 0, 0.0, final_out)
+    
+    tl.store(
+        o + cur_batch * stride_obs + cur_head * stride_oh + offs_d,
+        final_out,
+        mask=mask_d,
+    )
