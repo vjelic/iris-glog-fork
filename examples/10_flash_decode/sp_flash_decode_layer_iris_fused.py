@@ -44,7 +44,7 @@ class SpGQAFlashDecodeAttentionIrisAGFused(torch.nn.Module):
             dtype=torch.float16,
         )
 
-    def forward(self, q, k_cache, v_cache, global_kv_lens, block_table, iteration_id):
+    def forward(self, q, k_cache, v_cache, global_kv_lens, block_table):
         batch = q.shape[0]
         assert global_kv_lens.shape[0] == self.num_ranks
         assert global_kv_lens.shape[1] == batch
@@ -61,7 +61,7 @@ class SpGQAFlashDecodeAttentionIrisAGFused(torch.nn.Module):
             kv_split=self.kv_split
         )
         
-        self.iris_ag_layer.push_data(output_combine.contiguous(), iteration_id)
+        self.iris_ag_layer.push_data(output_combine.contiguous())
 
         ag_buffer = self.iris_ag_layer.gathered_buffer
         
@@ -84,8 +84,7 @@ class SpGQAFlashDecodeAttentionIrisAGFused(torch.nn.Module):
             self.rank,                             
             self.num_ranks,                        
             self.BLOCK_DV,                         
-            self.v_head_dim,
-            iteration_id                       
+            self.v_head_dim,                       
         )
 
         return final_output

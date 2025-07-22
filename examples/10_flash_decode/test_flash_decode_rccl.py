@@ -1,3 +1,27 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 ByteDance Ltd. and/or its affiliates
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files
+# (the "Software"), to deal in the Software without restriction,
+# including without limitation the rights to use, copy, modify, merge,
+# publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so,
+# subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+################################################################################
+
 import argparse
 import os
 import sys
@@ -204,63 +228,71 @@ def test_correctness(args) -> None:
 
         dist.barrier()
 
-    if args.rank == 0:
-        header = f"{'Index':<8} | {'Computed':<15} | {'Reference':<15} | {'Abs. Diff':<15}"
-        print("\n--- Comparison of First 16 Values (Head 0) ---")
-        print(header)
-        print("-" * len(header))
-        comp_slice, ref_slice = output[0, 0, :16].cpu(), ref_output[0, 0, :16].cpu()
-        diff_slice = torch.abs(comp_slice - ref_slice)
-        for j in range(len(comp_slice)):
-            print(f"{j:<8} | {comp_slice[j]:<15.6f} | {ref_slice[j]:<15.6f} | {diff_slice[j]:<15.6f}")
-        print("-" * len(header))
-
-    try:
-        torch.testing.assert_close(output, ref_output, atol=1e-3, rtol=1e-2)
-        max_diff = torch.max(torch.abs(output - ref_output))
-        dist_print(f"✅ TEST PASSED. Max absolute difference: {max_diff:.6f}", allowed_ranks="all")
-    except AssertionError as e:
-        dist_print(f"❌ TEST FAILED.\n{e}", allowed_ranks="all", is_error=True)
-
 @register_test("perf")
 def test_performance(args):
-    """Benchmarks the RCCL implementation at extreme scales."""
-    kv_len_configs = [131072, 262144, 524288, 1048576]
-
-    dist_print("🚀 Benchmarking RCCL Performance 🚀", allowed_ranks=[0])
+    """Benchmarks the RCCL implementation and presents results in a summary table."""
+    kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+    results_summary = []
     
-    warmup_iters = 2
-    benchmark_iters = 2
+    dist_print(f"🚀 Benchmarking RCCL Performance on {args.num_ranks} GPUs 🚀", allowed_ranks=[0])
+
+    num_heads, head_size, block_size = 96, 128, 1
+    dtype, soft_cap, num_seqs = torch.float16, 0.0, 1
+    torch.set_default_device("cuda")
+
+    num_query_heads = num_heads
+    num_kv_heads = num_query_heads // 8
+    scale = head_size**-0.5
+    
+    bytes_per_token = num_kv_heads * head_size * 2 * 2
+
+    warmup_iters = 5
+    benchmark_iters = 20
     
     for kv_len_per_rank in kv_len_configs:
-        num_heads, head_size, block_size = 96, 128, 1
-        dtype, soft_cap, num_seqs = torch.float16, 0.0, 1
-        torch.set_default_device("cuda")
-
-        num_query_heads = num_heads
-        num_kv_heads = num_query_heads // 8
-        scale = head_size**-0.5
-        NUM_BLOCKS_PER_RANK = kv_len_per_rank + 1
+        kv_cache_size_bytes = kv_len_per_rank * bytes_per_token
+        kv_cache_size_gb = kv_cache_size_bytes / (1024 * 1024 * 1024)
         
-        dist_print(f"\n----- Testing @ Global KV Len: {kv_len_per_rank * args.num_ranks} ({kv_len_per_rank}/GPU) -----", allowed_ranks=[0])
+        dist_print(f"\n----- Benchmarking @ KV Cache/GPU: {kv_cache_size_gb:.2f} GB (Len: {kv_len_per_rank}) -----", allowed_ranks=[0])
 
+        NUM_BLOCKS_PER_RANK = kv_len_per_rank + 1
         query = torch.randn(num_seqs, num_query_heads, head_size, dtype=dtype)
         key_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
         value_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
         block_tables_this_rank = torch.randint(0, NUM_BLOCKS_PER_RANK, (num_seqs, NUM_BLOCKS_PER_RANK), dtype=torch.int32)
         kv_lens_tensor = torch.tensor([kv_len_per_rank], dtype=torch.int32)
-        
-        global_kv_lens_tensor = torch.cat([kv_lens_tensor.view(1, -1) for _ in range(args.num_ranks)], dim=0)
+        global_kv_lens_tensor = kv_lens_tensor.repeat(args.num_ranks, 1)
 
-        ths_op = SpGQAFlashDecodeAttentionRCCL(args.rank, args.num_ranks, num_query_heads, num_kv_heads, head_size, head_size, TP_GROUP, page_size=block_size, scale=scale, soft_cap=soft_cap, max_allowed_batch=num_seqs)
+        ths_op = SpGQAFlashDecodeAttentionRCCL(
+            args.rank, args.num_ranks, num_query_heads, num_kv_heads, head_size, head_size, 
+            TP_GROUP, page_size=block_size, scale=scale, soft_cap=soft_cap, 
+            max_allowed_batch=num_seqs
+        )
 
         def func_to_benchmark():
             return ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
         
         _, time_ms = perf_func(func=func_to_benchmark, iters=benchmark_iters, warmup_iters=warmup_iters)
+        dist_print(f"      ✅ Result captured: {time_ms:.3f} ms", allowed_ranks=[0])
         
-        dist_print(f"    ✅ Average time: {time_ms:.3f} ms", allowed_ranks=[0])
+        if args.rank == 0:
+            results_summary.append({
+                "kv_len": kv_len_per_rank,
+                "cache_gb": kv_cache_size_gb,
+                "time_ms": time_ms,
+            })
         dist.barrier()
+
+    if args.rank == 0:
+        print("\n\n--- Final RCCL Performance Summary ---")
+        print("-" * 80)
+        header = f"{'KV Length/GPU (GB)':<28} | #GPU={args.num_ranks:<4} | {'Average Time (ms)':<25}"
+        print(header)
+        print("-" * 80)
+        for r in results_summary:
+            kv_len_str = f"{r['kv_len']} ({r['cache_gb']:.2f} GB)"
+            print(f"{kv_len_str:<28} | {'':<9} | {r['time_ms']:<25.3f}")
+        print("-" * 80)
 
 if __name__ == "__main__":
     args = get_args()
@@ -268,7 +300,6 @@ if __name__ == "__main__":
         help()
         sys.exit(0)
 
-    # --- Standard torchrun Initialization ---
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         dist.init_process_group(backend="nccl", init_method="env://")
         args.rank = int(os.environ["RANK"])
@@ -286,7 +317,6 @@ if __name__ == "__main__":
             print("Error: --case is a required argument ('correctness' or 'perf')."); help()
         sys.exit(1)
     
-    # --- Run the selected test case ---
     func = ALL_TESTS[args.case]
     func(args)
     

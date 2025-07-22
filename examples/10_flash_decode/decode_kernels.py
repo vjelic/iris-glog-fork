@@ -469,7 +469,6 @@ def kernel_fused_wait_and_combine(
     NUM_KV_SPLITS: tl.constexpr,
     BLOCK_DV: tl.constexpr,
     Lv: tl.constexpr,
-    iteration_id: tl.constexpr,
 ):
     cur_batch = tl.program_id(0)
     cur_head = tl.program_id(1)
@@ -483,13 +482,16 @@ def kernel_fused_wait_and_combine(
     e_max = -float("inf")
     acc = tl.zeros([BLOCK_DV], dtype=tl.float32)
 
+    
     for source_rank_id in range(0, NUM_KV_SPLITS):
-        flag_index = my_rank * NUM_KV_SPLITS + source_rank_id
         
-        while tl.load(signal_flags_ptr + flag_index, cache_modifier=".ca") <= iteration_id:
-            pass
-        # while tl.load(signal_flags_ptr + flag_index, cache_modifier=".ca") == 0:
+        flag_index = my_rank * NUM_KV_SPLITS + source_rank_id
+        # while tl.load(signal_flags_ptr + flag_index, cache_modifier=".ca") <= iteration_id:
         #     pass
+        while tl.atomic_cas(signal_flags_ptr + flag_index, 0, 0, sem="acquire") == 0:
+            pass
+        
+        # tl.atomic_xchg(signal_flags_ptr + flag_index, 0, sem="release")
 
         effective_kv_len = tl.load(cur_batch_seq_len_ptr + source_rank_id * batch)
         

@@ -22,6 +22,10 @@ class IrisAllGatherLayer:
         
         self.signal_flags = self.iris.zeros((self.num_ranks,), dtype=torch.int32)
 
+    def clear_flags(self):
+        self.signal_flags.zero_()
+        self.iris.barrier()
+
     def forward(self, local_data: torch.Tensor):
         bytes_per_rank = local_data.nbytes
         
@@ -29,8 +33,8 @@ class IrisAllGatherLayer:
         
         staging_slice.copy_(local_data.flatten().view(torch.int8))
         
-        self.signal_flags.zero_()
-        self.iris.barrier() 
+        # self.signal_flags.zero_()
+        # self.iris.barrier() 
 
         grid = lambda meta: (self.num_ranks,)
         
@@ -45,7 +49,8 @@ class IrisAllGatherLayer:
             self.num_ranks,
             bytes_per_rank,
             stride_output_rank=stride_bytes,
-            BLOCK_SIZE_B=131072, 
+            BLOCK_SIZE_B=32768, 
+            # BLOCK_SIZE_B=65536, 
         )
         
         list_of_shards = []

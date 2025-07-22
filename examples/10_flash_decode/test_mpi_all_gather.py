@@ -48,8 +48,8 @@ def perf_func(func, warmup_iters, iters, sync_func=None):
 def parse_args():
     parser = argparse.ArgumentParser(description="Test and benchmark MPI AllGather in Iris.")
     parser.add_argument("--dtype", type=str, default="float32", choices=["int8", "int32", "float16", "float32"])
-    parser.add_argument("--warmup_iters", type=int, default=10, help="Number of warmup iterations.")
-    parser.add_argument("--iters", type=int, default=5, help="Number of main iterations for performance measurement.")
+    parser.add_argument("--warmup_iters", type=int, default=2, help="Number of warmup iterations.")
+    parser.add_argument("--iters", type=int, default=2, help="Number of main iterations for performance measurement.")
     parser.add_argument("--verify", default=True, action=argparse.BooleanOptionalAction, help="Run correctness verification before performance test.")
     return parser.parse_args()
 
@@ -124,8 +124,8 @@ if __name__ == "__main__":
 
     ag_op = MPIAllGatherLayer(iris_instance)
 
-    sizes_mb = [1, 4, 16, 32, 64, 128, 256, 512]
-    max_buffer_size_for_alloc = 512 * 1024 * 1024
+    sizes_mb = [1, 4, 16, 32, 64, 128, 256, 512, 1024]
+    max_buffer_size_for_alloc = 1024 * 1024 * 1024
     results = []
 
     for size_mb in sizes_mb:

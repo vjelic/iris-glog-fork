@@ -31,6 +31,7 @@ from typing import List, Optional
 import numpy as np
 import torch
 import iris
+import time
 
 from utils import (perf_func, dist_print, group_profile)
 from sp_flash_decode_layer_iris import SpGQAFlashDecodeAttentionIrisAG
@@ -148,8 +149,20 @@ def test_triton_decode_with_paged_kv(args) -> None:
         head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
         max_allowed_batch=1, thrink_buffer_threshold=500, stages=20
     )
+    
+    # ths_op = SpGQAFlashDecodeAttentionIrisAG(
+    #     iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+    #     args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+    #     head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+    #     max_allowed_batch=1, thrink_buffer_threshold=500, stages=20
+    # )
 
-    for i in range(4):
+
+    for i in range(10):
+        iris_instance.barrier()
+        ths_op.iris_ag_layer.clear_flags()
+        iris_instance.barrier()
+        
         dist_print(f"\n<<<<<<<<<< Correctness Test: Iteration {i+1} >>>>>>>>>>", allowed_ranks=[0])
         if args.rank == 0:
             query = torch.randn(num_seqs, num_query_heads, head_size, dtype=dtype) / 10
@@ -178,7 +191,12 @@ def test_triton_decode_with_paged_kv(args) -> None:
         kv_lens_tensor = torch.tensor(kv_lens_per_rank, dtype=torch.int32, device=query.device)
         global_kv_lens_tensor = torch.cat([kv_lens_tensor.view(1, -1) for _ in range(args.num_ranks)], dim=0)
 
-        output = ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank, iteration_id=i)
+      
+        output = ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+        # output = ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+        
+        torch.cuda.synchronize()
+        
         ref_output = ref_paged_attn(
             query=query.clone(), key_cache=key_cache, value_cache=value_cache,
             query_lens=[1] * num_seqs, kv_lens_per_rank=global_kv_lens,
@@ -216,6 +234,10 @@ def test_triton_decode_with_paged_kv(args) -> None:
             print(f"❌ TEST FAILED for Rank {args.rank}:\n{e}")
 
         iris_instance.barrier()
+        ths_op.iris_ag_layer.clear_flags()
+        iris_instance.barrier()
+        torch.cuda.synchronize()
+        
 
 @register_test("perf")
 def perf_decode_iris(args):
@@ -295,7 +317,7 @@ def perf_decode_comparison(args):
     Benchmarks and compares SpGQAFlashDecodeAttentionIrisAG against a standard
     SpGQAFlashDecodeAttention implementation at extreme scales.
     """
-    kv_len_configs = [131072, 262144, 524288, 1048576]
+    kv_len_configs = [131072, 262144, 524288, 2097152]
     
     results_summary = []
 
@@ -382,27 +404,34 @@ def perf_decode_comparison(args) -> None:
     Benchmarks and compares the fused Iris attention, standard Iris All-Gather,
     and the baseline MPI implementation.
     """
-    kv_len_configs = [131072, 262144, 524288, 1048576]
+    kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
     results_summary = []
     
-    warmup_iters = 2
+    warmup_iters = 5
     benchmark_iters = 2
 
-    for kv_len_per_rank in kv_len_configs:
-        num_heads = 96
-        head_size = 128
-        block_size = 1
-        dtype = torch.float16
-        soft_cap = 0
-        num_seqs = 1
-        torch.set_default_device("cuda")
+    # --- Model & Hardware Constants ---
+    num_heads = 96
+    head_size = 128
+    block_size = 1
+    dtype = torch.float16
+    soft_cap = 0
+    num_seqs = 1
+    torch.set_default_device("cuda")
 
-        num_query_heads = num_heads
-        num_kv_heads = num_query_heads // 8
-        scale = head_size**-0.5
+    num_query_heads = num_heads
+    num_kv_heads = num_query_heads // 8
+    scale = head_size**-0.5
+    
+    bytes_per_token = num_kv_heads * head_size * 2 * 2
+
+    for kv_len_per_rank in kv_len_configs:
         NUM_BLOCKS_PER_RANK = kv_len_per_rank + 1
         
-        dist_print(f"\n{'='*20} Comparing @ KV Len per Rank: {kv_len_per_rank} {'='*20}", allowed_ranks=[0])
+        kv_cache_size_bytes = kv_len_per_rank * bytes_per_token
+        kv_cache_size_gb = kv_cache_size_bytes / (1024 * 1024 * 1024)
+        
+        dist_print(f"\n{'='*20} Comparing @ KV Cache/GPU: {kv_cache_size_bytes} Bytes ({kv_cache_size_gb:.2f} GB) (Len: {kv_len_per_rank}) {'='*20}", allowed_ranks=[0])
 
         query = torch.randn(num_seqs, num_query_heads, head_size, dtype=dtype)
         key_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
@@ -415,7 +444,6 @@ def perf_decode_comparison(args) -> None:
         torch.cuda.synchronize()
 
         # 1. BENCHMARK FUSED IRIS IMPLEMENTATION
-      
         dist_print("--> Benchmarking: Fused Iris Version (SpGQAFlashDecodeAttentionIrisAGFused)...", allowed_ranks=[0])
         ths_op_fused = SpGQAFlashDecodeAttentionIrisAGFused(
             args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
@@ -423,12 +451,11 @@ def perf_decode_comparison(args) -> None:
             head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
             max_allowed_batch=num_seqs
         )
-
-        dist_print(f"    Running {warmup_iters} warmup iterations...", allowed_ranks=[0])
+        dist_print(f"      Running {warmup_iters} warmup iterations...", allowed_ranks=[0])
         for i in range(warmup_iters):
             ths_op_fused(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank, iteration_id=i)
 
-        dist_print(f"    Running {benchmark_iters} benchmark iterations...", allowed_ranks=[0])
+        dist_print(f"      Running {benchmark_iters} benchmark iterations...", allowed_ranks=[0])
         torch.cuda.synchronize()
         args.iris_instance.barrier()
         start_event = torch.cuda.Event(enable_timing=True)
@@ -441,12 +468,10 @@ def perf_decode_comparison(args) -> None:
         
         torch.cuda.synchronize()
         time_fused_ms = start_event.elapsed_time(end_event) / benchmark_iters
-        dist_print(f"    Done. Average time: {time_fused_ms:.3f} ms", allowed_ranks=[0])
-        
+        dist_print(f"      Done. Average time: {time_fused_ms:.3f} ms", allowed_ranks=[0])
         args.iris_instance.barrier()
 
         # 2. BENCHMARK STANDARD IRIS ALL-GATHER IMPLEMENTATION
-        
         dist_print("\n--> Benchmarking: Standard Iris AG Version (SpGQAFlashDecodeAttentionIrisAG)...", allowed_ranks=[0])
         ths_op_iris_ag = SpGQAFlashDecodeAttentionIrisAG(
             args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
@@ -454,18 +479,14 @@ def perf_decode_comparison(args) -> None:
             head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
             max_allowed_batch=num_seqs
         )
-        
         def func_to_benchmark_iris_ag():
             return ths_op_iris_ag(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
         
         _, time_iris_ag_ms = perf_func(func=func_to_benchmark_iris_ag, iters=benchmark_iters, warmup_iters=warmup_iters)
-        dist_print(f"    Done. Average time: {time_iris_ag_ms:.3f} ms", allowed_ranks=[0])
-        
+        dist_print(f"      Done. Average time: {time_iris_ag_ms:.3f} ms", allowed_ranks=[0])
         args.iris_instance.barrier()
 
-        
         # 3. BENCHMARK MPI BASELINE IMPLEMENTATION
-
         dist_print("\n--> Benchmarking: MPI Baseline (SpGQAFlashDecodeAttentionMPI)...", allowed_ranks=[0])
         ths_op_mpi = SpGQAFlashDecodeAttentionMPI(
             args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
@@ -473,38 +494,172 @@ def perf_decode_comparison(args) -> None:
             head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
             max_allowed_batch=num_seqs
         )
-        
         def func_to_benchmark_mpi():
             return ths_op_mpi(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
         
         _, time_mpi_ms = perf_func(func=func_to_benchmark_mpi, iters=benchmark_iters, warmup_iters=warmup_iters)
-        dist_print(f"    Done. Average time: {time_mpi_ms:.3f} ms", allowed_ranks=[0])
-
+        dist_print(f"      Done. Average time: {time_mpi_ms:.3f} ms", allowed_ranks=[0])
         args.iris_instance.barrier()
-
-      
+    
         if args.rank == 0:
             results_summary.append({
                 "kv_len": kv_len_per_rank,
+                "cache_gb": kv_cache_size_gb,
                 "fused_ms": time_fused_ms,
                 "iris_ag_ms": time_iris_ag_ms,
                 "mpi_ms": time_mpi_ms,
             })
             print(f"--- Comparison Result ---")
-            print(f"  - Fused Iris    : {time_fused_ms:.3f} ms")
-            print(f"  - Std. Iris AG  : {time_iris_ag_ms:.3f} ms")
-            print(f"  - MPI Baseline  : {time_mpi_ms:.3f} ms")
+            print(f" - Fused Iris      : {time_fused_ms:.3f} ms")
+            print(f" - Std. Iris AG    : {time_iris_ag_ms:.3f} ms")
+            print(f" - MPI Baseline    : {time_mpi_ms:.3f} ms")
 
+    args.iris_instance.barrier()
     if args.rank == 0 and results_summary:
         print("\n\n--- Final Performance Comparison Summary ---")
-        print("-" * 95)
-        header = f"{'KV Len/GPU':<15} | {'Fused Iris (ms)':<20} | {'Std. Iris AG (ms)':<20} | {'MPI Baseline (ms)':<20} | {'Speedup vs MPI':<15}"
+        print("-" * 110)
+        header = f"{'KV Length/GPU (GB)':<10} #GPU={args.num_ranks} | {'Fused Iris (ms)':<20} | {'Std. Iris AG (ms)':<20} | {'MPI Baseline (ms)':<20} | {'Speedup vs Std AG':<20}"
         print(header)
-        print("-" * 95)
+        print("-" * 110)
         for r in results_summary:
-            speedup = r['mpi_ms'] / r['fused_ms'] if r['fused_ms'] > 0 else 0.0
-            print(f"{r['kv_len']:<15} | {r['fused_ms']:<20.3f} | {r['iris_ag_ms']:<20.3f} | {r['mpi_ms']:<20.3f} | {speedup:<15.2f}x")
-        print("-" * 95)
+            speedup = r['iris_ag_ms'] / r['fused_ms'] if r['fused_ms'] > 0 else 0.0
+            kv_len_str = f"{r['kv_len']} ({r['cache_gb']:.2f} GB)"
+            print(f"{kv_len_str:<28} | {r['fused_ms']:<20.3f} | {r['iris_ag_ms']:<20.3f} | {r['mpi_ms']:<20.3f} | {speedup:<20.2f}x")
+        print("-" * 110)
+
+@register_test("compare3")
+def perf_decode_comparison2(args) -> None:
+    """
+    Benchmarks and compares the fused Iris attention, standard Iris All-Gather,
+    and the baseline MPI implementation using iris.do_bench.
+    """
+    kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+    results_summary = []
+    
+    warmup_iters = 5
+    benchmark_iters = 20
+
+    num_heads = 96
+    head_size = 128
+    block_size = 1
+    dtype = torch.float16
+    soft_cap = 0
+    num_seqs = 1
+    torch.set_default_device("cuda")
+
+    num_query_heads = num_heads
+    num_kv_heads = num_query_heads // 8
+    scale = head_size**-0.5
+    
+    # K+V cache, 2 bytes per float16 element
+    bytes_per_token = num_kv_heads * head_size * 2 * 2 
+
+    for kv_len_per_rank in kv_len_configs:
+        NUM_BLOCKS_PER_RANK = kv_len_per_rank + 1
+        
+        kv_cache_size_bytes = kv_len_per_rank * bytes_per_token
+        kv_cache_size_gb = kv_cache_size_bytes / (1024 * 1024 * 1024)
+        
+        dist_print(f"\n{'='*20} Comparing @ KV Cache/GPU: {kv_cache_size_bytes} Bytes ({kv_cache_size_gb:.2f} GB) (Len: {kv_len_per_rank}) {'='*20}", allowed_ranks=[0])
+
+        query = torch.randn(num_seqs, num_query_heads, head_size, dtype=dtype)
+        key_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
+        value_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
+        block_tables_this_rank = torch.randint(0, NUM_BLOCKS_PER_RANK, (num_seqs, NUM_BLOCKS_PER_RANK), dtype=torch.int32)
+        kv_lens_tensor = torch.tensor([kv_len_per_rank], dtype=torch.int32)
+        global_kv_lens_tensor = torch.cat([kv_lens_tensor.view(1, -1) for _ in range(args.num_ranks)], dim=0)
+        
+        args.iris_instance.barrier()
+        torch.cuda.synchronize()
+
+        # 1. BENCHMARK FUSED IRIS IMPLEMENTATION
+        dist_print("--> Benchmarking: Fused Iris Version (SpGQAFlashDecodeAttentionIrisAGFused)...", allowed_ranks=[0])
+        ths_op_fused = SpGQAFlashDecodeAttentionIrisAGFused(
+            args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+            args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+            head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+            max_allowed_batch=num_seqs
+        )
+        fused_preamble = lambda: (ths_op_fused.iris_ag_layer.clear_flags())
+        fn_to_benchmark_iris_ag_fused = lambda: ths_op_fused(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+
+        time_fused_ms = iris.do_bench(
+            fn=fn_to_benchmark_iris_ag_fused,
+            preamble_fn=fused_preamble,
+            barrier_fn=args.iris_instance.barrier,
+            n_warmup=warmup_iters,
+            n_repeat=benchmark_iters,
+            return_mode="mean",
+        )
+        dist_print(f"      Done. Average time: {time_fused_ms:.3f} ms", allowed_ranks=[0])
+        args.iris_instance.barrier()
+
+        # 2. BENCHMARK STANDARD IRIS ALL-GATHER IMPLEMENTATION
+        dist_print("\n--> Benchmarking: Standard Iris AG Version (SpGQAFlashDecodeAttentionIrisAG)...", allowed_ranks=[0])
+        ths_op_iris_ag = SpGQAFlashDecodeAttentionIrisAG(
+            args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+            args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+            head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+            max_allowed_batch=num_seqs
+        )
+        fn_to_benchmark_iris_ag = lambda: ths_op_iris_ag(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+        
+        time_iris_ag_ms = iris.do_bench(
+            fn=fn_to_benchmark_iris_ag,
+            preamble_fn=ths_op_iris_ag.iris_ag_layer.clear_flags,
+            barrier_fn=args.iris_instance.barrier,
+            n_warmup=warmup_iters,
+            n_repeat=benchmark_iters,
+            return_mode="mean",
+        )
+        dist_print(f"      Done. Average time: {time_iris_ag_ms:.3f} ms", allowed_ranks=[0])
+        args.iris_instance.barrier()
+
+        # 3. BENCHMARK MPI BASELINE IMPLEMENTATION
+        dist_print("\n--> Benchmarking: MPI Baseline (SpGQAFlashDecodeAttentionMPI)...", allowed_ranks=[0])
+        ths_op_mpi = SpGQAFlashDecodeAttentionMPI(
+            args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks,
+            args.num_ranks // args.local_num_ranks, num_query_heads, num_kv_heads, head_size,
+            head_size, page_size=block_size, scale=scale, soft_cap=soft_cap,
+            max_allowed_batch=num_seqs
+        )
+        fn_to_benchmark_mpi = lambda: ths_op_mpi(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+        
+        time_mpi_ms = iris.do_bench(
+            fn=fn_to_benchmark_mpi,
+            barrier_fn=args.iris_instance.barrier,
+            n_warmup=warmup_iters,
+            n_repeat=benchmark_iters,
+            return_mode="mean",
+        )
+        dist_print(f"      Done. Average time: {time_mpi_ms:.3f} ms", allowed_ranks=[0])
+        args.iris_instance.barrier()
+    
+        if args.rank == 0:
+            results_summary.append({
+                "kv_len": kv_len_per_rank,
+                "cache_gb": kv_cache_size_gb,
+                "fused_ms": time_fused_ms,
+                "iris_ag_ms": time_iris_ag_ms,
+                "mpi_ms": time_mpi_ms,
+            })
+            print(f"--- Comparison Result ---")
+            print(f" - Fused Iris      : {time_fused_ms:.3f} ms")
+            print(f" - Std. Iris AG    : {time_iris_ag_ms:.3f} ms")
+            print(f" - MPI Baseline    : {time_mpi_ms:.3f} ms")
+
+    args.iris_instance.barrier()
+    if args.rank == 0 and results_summary:
+        print("\n\n--- Final Performance Comparison Summary ---")
+        print("-" * 110)
+        header = f"{'KV Length/GPU (GB)':<28} | {'Fused Iris (ms)':<20} | {'Std. Iris AG (ms)':<20} | {'MPI Baseline (ms)':<20} | {'Speedup vs Std AG':<20}"
+        print(header)
+        print("-" * 110)
+        for r in results_summary:
+            speedup = r['iris_ag_ms'] / r['fused_ms'] if r['fused_ms'] > 0 else 0.0
+            kv_len_str = f"{r['kv_len']} ({r['cache_gb']:.2f} GB)"
+            print(f"{kv_len_str:<28} | {r['fused_ms']:<20.3f} | {r['iris_ag_ms']:<20.3f} | {r['mpi_ms']:<20.3f} | {speedup:<20.2f}x")
+        print("-" * 110)
 
 if __name__ == "__main__":
     RANK = int(os.environ.get("RANK", 0))

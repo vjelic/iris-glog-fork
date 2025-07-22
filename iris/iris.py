@@ -251,8 +251,11 @@ def translate(src_ptr, cur_rank, target_rank, heap_bases, debug=False):
     # src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, (64, 64)), (64, 64))
     # dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, (64, 64)), (64, 64))
 
-    # src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, 512), 512)
-    # dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, 512), 512)
+    if len(src_ptr.shape) > 0:
+        src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, 512), (512,))
+        dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, 512), (512,))
+        # src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, (64, 64)), (64, 64))
+        # dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, (64, 64)), (64, 64))
     return dst_ptr
 
 

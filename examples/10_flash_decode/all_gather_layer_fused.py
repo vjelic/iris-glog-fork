@@ -21,17 +21,17 @@ class IrisAllGatherLayerFused:
         
         self.signal_flags = self.iris.zeros((self.num_ranks, self.num_ranks), dtype=torch.int32)
 
-    def push_data(self, local_data: torch.Tensor, iteration_id: int):
+    def push_data(self, local_data: torch.Tensor):
         bytes_per_rank = local_data.nbytes
         
         staging_slice = self.local_staging_buffer[:bytes_per_rank]
         staging_slice.copy_(local_data.flatten().view(torch.int8))
 
-        torch.cuda.synchronize()
-        self.iris.barrier()
+        # torch.cuda.synchronize()
+        # self.iris.barrier()
 
-        self.signal_flags.zero_()
-        self.iris.barrier() 
+        # self.signal_flags.zero_()
+        # self.iris.barrier() 
 
         grid = lambda meta: (self.num_ranks,)
         
@@ -43,14 +43,18 @@ class IrisAllGatherLayerFused:
             self.rank,
             self.num_ranks,
             bytes_per_rank,
-            iteration_id,
             stride_output_rank=self.gathered_buffer.stride(0),
-            BLOCK_SIZE_B=131072, 
+            BLOCK_SIZE_B=32768, 
+            # BLOCK_SIZE_B=65536, 
         )
+        
+    def clear_flags(self):
+        self.signal_flags.zero_()
+        self.iris.barrier() 
 
     def forward(self, local_data: torch.Tensor):
-        self.push_data(local_data)
-        self.iris.barrier()
+        # self.push_data(local_data)
+        # self.iris.barrier()
         
         list_of_shards = []
         bytes_per_rank = local_data.nbytes

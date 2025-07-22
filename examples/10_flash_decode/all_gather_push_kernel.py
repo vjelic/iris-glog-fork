@@ -64,7 +64,6 @@ def iris_allgather_push_kernel_fused(
     rank: tl.constexpr,
     world_size: tl.constexpr,
     bytes_per_rank: tl.constexpr,
-    iteration_id: tl.constexpr,
     stride_output_rank: tl.constexpr,
     BLOCK_SIZE_B: tl.constexpr,
 ):
@@ -92,4 +91,4 @@ def iris_allgather_push_kernel_fused(
 
     flag_index = destination_rank * world_size + rank
     # iris.atomic_add(signal_flags_ptr + flag_index, 1, rank, destination_rank, heap_bases_ptr, sem="release", scope="sys")
-    tl.atomic_cas(signal_flags_ptr + flag_index, iteration_id, iteration_id + 1)
+    iris.atomic_add(signal_flags_ptr + flag_index, 1, rank, destination_rank, heap_bases_ptr, sem="release", scope="sys")

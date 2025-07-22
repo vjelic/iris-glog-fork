@@ -78,7 +78,7 @@ class SpGQAFlashDecodeAttentionIrisAG(torch.nn.Module):
         
         ag_buffer = self.iris_ag_layer.forward(output_combine.contiguous())
         
-        self.iris_instance.barrier()
+        # self.iris_instance.barrier()
         
         all_ranks_output_combine = ag_buffer.view(
             [self.num_ranks, batch, self.num_q_heads, self.v_head_dim + 1]
