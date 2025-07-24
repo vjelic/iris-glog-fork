@@ -1,9 +1,9 @@
 import torch
 import triton
 import iris
-from all_gather_push_kernel import iris_allgather_push_kernel_fused
+from all_gather_push_kernel import iris_allgather_push_kernel_no_wait
 
-class IrisAllGatherLayerFused:
+class IrisAllGatherLayerNoWait:
     def __init__(self, iris_instance: iris.Iris, max_buffer_size: int, dtype: torch.dtype):
         self.iris = iris_instance
         self.rank = self.iris.get_rank()
@@ -35,7 +35,7 @@ class IrisAllGatherLayerFused:
 
         grid = lambda meta: (self.num_ranks,)
         
-        iris_allgather_push_kernel_fused[grid](
+        iris_allgather_push_kernel_no_wait[grid](
             self.local_staging_buffer,
             self.gathered_buffer,
             self.signal_flags,

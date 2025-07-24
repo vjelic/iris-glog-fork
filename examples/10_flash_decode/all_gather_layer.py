@@ -40,7 +40,7 @@ class IrisAllGatherLayer:
         
         stride_bytes = self.gathered_buffer.stride(0)
 
-        iris_allgather_push_kernel[grid](
+        kk = iris_allgather_push_kernel[grid](
             self.local_staging_buffer,
             self.gathered_buffer,
             self.signal_flags,
@@ -51,7 +51,10 @@ class IrisAllGatherLayer:
             stride_output_rank=stride_bytes,
             BLOCK_SIZE_B=32768, 
             # BLOCK_SIZE_B=65536, 
+            # BLOCK_SIZE_B = 32
         )
+        
+        # print(f"{kk.n_regs} registers used, {kk.n_spills} spills")
         
         list_of_shards = []
         for i in range(self.num_ranks):

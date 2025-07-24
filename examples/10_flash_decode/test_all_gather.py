@@ -7,8 +7,8 @@ from all_gather_layer import IrisAllGatherLayer
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dtype", type=str, default="float16", choices=["int8", "int32", "float16", "float32"])
-    parser.add_argument("--n_warmup", type=int, default=25, help="Number of warmup iterations for performance measurement.")
-    parser.add_argument("--n_repeat", type=int, default=100, help="Number of main iterations for performance measurement.")
+    parser.add_argument("--n_warmup", type=int, default=4, help="Number of warmup iterations for performance measurement.")
+    parser.add_argument("--n_repeat", type=int, default=10, help="Number of main iterations for performance measurement.")
     parser.add_argument("--verify", default=True, action=argparse.BooleanOptionalAction, help="Run correctness verification before performance test.")
     args = parser.parse_args()
     return args

@@ -56,7 +56,7 @@ def iris_allgather_push_kernel(
         current_arrivals = tl.atomic_cas(signal_flags_ptr + rank, -1, -1, sem="acquire", scope="sys")
     
 @triton.jit
-def iris_allgather_push_kernel_fused(
+def iris_allgather_push_kernel_no_wait(
     local_data_ptr,         
     gathered_output_ptr,    
     signal_flags_ptr,      
