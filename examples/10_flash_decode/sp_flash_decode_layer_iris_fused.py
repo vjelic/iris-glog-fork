@@ -3,7 +3,6 @@ import triton
 import math
 import iris
 
-# Assume these kernels are defined in a separate file and imported
 from decode_kernels import (
     kernel_gqa_fwd_batch_decode_split_kv,
     kernel_intra_rank_gqa_fwd_batch_decode_combine_kv_fused,
