@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import os
 import sys
 from typing import List, Optional
@@ -206,69 +207,124 @@ def test_correctness(args) -> None:
 
 @register_test("perf")
 def test_performance(args):
-    """Benchmarks the RCCL implementation and presents results in a summary table."""
+    """Benchmarks the RCCL implementation across various model shapes and sequence lengths."""
+    
+    # Define model shapes to test
+    model_configs = [
+        {"batch_size": 1, "num_q_heads": 96, "head_size": 128},
+        {"batch_size": 8, "num_q_heads": 96, "head_size": 128},
+        {"batch_size": 16, "num_q_heads": 96, "head_size": 128},
+        {"batch_size": 1, "num_q_heads": 48, "head_size": 64},
+    ]
+
     kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
-    results_summary = []
     
     dist_print(f"🚀 Benchmarking RCCL Performance on {args.num_ranks} GPUs 🚀", allowed_ranks=[0])
-
-    num_heads, head_size, block_size = 96, 128, 1
-    dtype, soft_cap, num_seqs = torch.float16, 0.0, 1
     torch.set_default_device("cuda")
 
-    num_query_heads = num_heads
-    num_kv_heads = num_query_heads // 8
-    scale = head_size**-0.5
-    
-    bytes_per_token = num_kv_heads * head_size * 2 * 2
-
-    warmup_iters = 5
-    benchmark_iters = 20
-    
-    for kv_len_per_rank in kv_len_configs:
-        kv_cache_size_bytes = kv_len_per_rank * bytes_per_token
-        kv_cache_size_gb = kv_cache_size_bytes / (1024 * 1024 * 1024)
+    for model_config in model_configs:
+        results_summary = []
         
-        dist_print(f"\n----- Benchmarking @ KV Cache/GPU: {kv_cache_size_gb:.2f} GB (Len: {kv_len_per_rank}) -----", allowed_ranks=[0])
-
-        NUM_BLOCKS_PER_RANK = kv_len_per_rank + 1
-        query = torch.randn(num_seqs, num_query_heads, head_size, dtype=dtype)
-        key_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
-        value_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
-        block_tables_this_rank = torch.randint(0, NUM_BLOCKS_PER_RANK, (num_seqs, NUM_BLOCKS_PER_RANK), dtype=torch.int32)
-        kv_lens_tensor = torch.tensor([kv_len_per_rank], dtype=torch.int32)
-        global_kv_lens_tensor = kv_lens_tensor.repeat(args.num_ranks, 1)
-
-        ths_op = SpGQAFlashDecodeAttentionRCCL(
-            args.rank, args.num_ranks, num_query_heads, num_kv_heads, head_size, head_size, 
-            TP_GROUP, page_size=block_size, scale=scale, soft_cap=soft_cap, 
-            max_allowed_batch=num_seqs
-        )
-
-        def func_to_benchmark():
-            return ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+        batch_size = model_config["batch_size"]
+        num_query_heads = model_config["num_q_heads"]
+        head_size = model_config["head_size"]
         
-        _, time_ms = perf_func(func=func_to_benchmark, iters=benchmark_iters, warmup_iters=warmup_iters)
-        dist_print(f"      ✅ Result captured: {time_ms:.3f} ms", allowed_ranks=[0])
+        # Derived parameters
+        num_kv_heads = num_query_heads // 8
+        scale = head_size**-0.5
+        dtype = torch.float16
+        soft_cap = 0.0
+        block_size = 1
+        bytes_per_token = num_kv_heads * head_size * 2 * 2
         
+        dist_print(f"\n\n{'#'*80}", allowed_ranks=[0])
+        dist_print(f"### New Benchmark Suite ###", allowed_ranks=[0])
+        dist_print(f"# Config: Batch={batch_size}, Q-Heads={num_query_heads}, Head-Dim={head_size}", allowed_ranks=[0])
+        dist_print(f"{'#'*80}", allowed_ranks=[0])
+
+        warmup_iters = 5
+        benchmark_iters = 20
+        
+        for kv_len_per_rank in kv_len_configs:
+            kv_cache_size_bytes = kv_len_per_rank * bytes_per_token * batch_size
+            kv_cache_size_gb = kv_cache_size_bytes / (1024 * 1024 * 1024)
+            
+            dist_print(f"\n----- Benchmarking @ KV Cache/GPU: {kv_cache_size_gb:.2f} GB (Len: {kv_len_per_rank}) -----", allowed_ranks=[0])
+
+            NUM_BLOCKS_PER_RANK = kv_len_per_rank + 1
+            query = torch.randn(batch_size, num_query_heads, head_size, dtype=dtype)
+            key_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
+            value_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK, block_size, num_kv_heads, head_size, dtype=dtype)
+            block_tables_this_rank = torch.randint(0, NUM_BLOCKS_PER_RANK, (batch_size, NUM_BLOCKS_PER_RANK), dtype=torch.int32)
+            kv_lens_tensor = torch.tensor([kv_len_per_rank] * batch_size, dtype=torch.int32)
+            global_kv_lens_tensor = kv_lens_tensor.unsqueeze(0).repeat(args.num_ranks, 1)
+
+            ths_op = SpGQAFlashDecodeAttentionRCCL(
+                args.rank, args.num_ranks, num_query_heads, num_kv_heads, head_size, head_size, 
+                TP_GROUP, page_size=block_size, scale=scale, soft_cap=soft_cap, 
+                max_allowed_batch=batch_size
+            )
+
+            def func_to_benchmark():
+                return ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
+            
+            _, time_ms = perf_func(func=func_to_benchmark, iters=benchmark_iters, warmup_iters=warmup_iters)
+            dist_print(f"       ✅ Result captured: {time_ms:.3f} ms", allowed_ranks=[0])
+            
+            if args.rank == 0:
+                results_summary.append({
+                    "kv_len": kv_len_per_rank,
+                    "cache_gb": kv_cache_size_gb,
+                    "time_ms": time_ms,
+                })
+            dist.barrier()
+
         if args.rank == 0:
-            results_summary.append({
-                "kv_len": kv_len_per_rank,
-                "cache_gb": kv_cache_size_gb,
-                "time_ms": time_ms,
-            })
-        dist.barrier()
+            # --- Print final summary to console ---
+            print("\n\n--- Final RCCL Performance Summary ---")
+            print(f"--- Config: Batch={batch_size}, Q-Heads={num_query_heads}, Head-Dim={head_size} ---")
+            header = f"{'KV Length/GPU (GB)':<28} | #GPU={args.num_ranks:<4} | {'Average Time (ms)':<25}"
+            separator = "-" * len(header)
+            print(separator)
+            print(header)
+            print(separator)
+            for r in results_summary:
+                kv_len_str = f"{r['kv_len']} ({r['cache_gb']:.2f} GB)"
+                print(f"{kv_len_str:<28} | {'':<9} | {r['time_ms']:<25.3f}")
+            print(separator)
 
-    if args.rank == 0:
-        print("\n\n--- Final RCCL Performance Summary ---")
-        print("-" * 80)
-        header = f"{'KV Length/GPU (GB)':<28} | #GPU={args.num_ranks:<4} | {'Average Time (ms)':<25}"
-        print(header)
-        print("-" * 80)
-        for r in results_summary:
-            kv_len_str = f"{r['kv_len']} ({r['cache_gb']:.2f} GB)"
-            print(f"{kv_len_str:<28} | {'':<9} | {r['time_ms']:<25.3f}")
-        print("-" * 80)
+            # --- Append final summary to a log file ---
+            filename = "rccl_perf_results_log.txt"
+            print(f"\nAppending detailed results to {filename}...")
+            
+            try:
+                with open(filename, 'a') as f:
+                    f.write(f"\n\n{'='*80}\n")
+                    f.write(f"--- New Benchmark Run: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+                    f.write(f"{'='*80}\n\n")
+
+                    f.write("--- Configuration ---\n")
+                    f.write(f"Number of GPUs: {args.num_ranks}\n")
+                    f.write(f"Batch Size: {batch_size}\n")
+                    f.write(f"Number of Query Heads: {num_query_heads}\n")
+                    f.write(f"Head Dimension: {head_size}\n\n")
+
+                    f.write("--- Final RCCL Performance Summary ---\n")
+                    f.write(separator + '\n')
+                    f.write(header + '\n')
+                    f.write(separator + '\n')
+
+                    for r in results_summary:
+                        kv_len_str = f"{r['kv_len']} ({r['cache_gb']:.2f} GB)"
+                        row_str = f"{kv_len_str:<28} | {'':<9} | {r['time_ms']:<25.3f}"
+                        f.write(row_str + '\n')
+
+                    f.write(separator + '\n')
+                
+                print(f"Results successfully appended to {filename}.")
+            except IOError as e:
+                print(f"Error: Could not write to file {filename}. \n{e}", is_error=True)
+
 
 if __name__ == "__main__":
     args = get_args()
