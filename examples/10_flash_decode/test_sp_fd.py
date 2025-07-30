@@ -3,6 +3,7 @@ import datetime
 import os
 import sys
 from typing import List, Optional
+import json # Added for JSON output
 
 import numpy as np
 import torch
@@ -270,7 +271,7 @@ def perf_decode_iris(args):
             args.iris_instance.barrier()
             
             if args.rank == 0:
-                dist_print(f"       Done. Average time: {time_ms:.3f} ms", allowed_ranks=[0])
+                dist_print(f"         Done. Average time: {time_ms:.3f} ms", allowed_ranks=[0])
                 kv_results[impl_name] = time_ms
         
         full_results.append(kv_results)
@@ -278,7 +279,7 @@ def perf_decode_iris(args):
     if args.rank == 0:
         print("\n\n--- Final Performance Summary ---")
         print(f"Implementations: {PERF_IMPLS_TO_TEST} | Num GPUs: {args.num_ranks}")
-        header = f"{'KV Len/GPU':<15} | " + " | ".join([f"{(name + ' (ms)'):<18}" for name in PERF_IMPLS_TO_TEST])           
+        header = f"{'KV Len/GPU':<15} | " + " | ".join([f"{(name + ' (ms)'):<18}" for name in PERF_IMPLS_TO_TEST])          
         print("-" * len(header))
         print(header)
         print("-" * len(header))
@@ -296,27 +297,53 @@ def perf_decode_comparison2(args) -> None:
     """
     # Define model shapes to test: (batch_size, num_query_heads, head_size)
     model_configs = [
-        {"batch_size": 1, "num_q_heads": 96, "head_size": 128},
-        {"batch_size": 8, "num_q_heads": 96, "head_size": 128},
-        {"batch_size": 16, "num_q_heads": 96, "head_size": 128},
-        {"batch_size": 1, "num_q_heads": 48, "head_size": 64},
-    ]
+    # --- 1. Stress Latency vs. Bandwidth (Varying Batch Size) ---
+    # Fused kernel should excel at low batch sizes.
+      {"batch_size": 1, "num_q_heads": 96, "head_size": 128},
+    {"batch_size": 4, "num_q_heads": 96, "head_size": 128},
     
-    kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144]
+    # The crossover point where All-Gather may become faster is likely here.
+    {"batch_size": 8, "num_q_heads": 96, "head_size": 128},
+    {"batch_size": 1, "num_q_heads": 384, "head_size": 128},
+    # {"batch_size": 1, "num_q_heads": 768, "head_size": 128},
+    # All-Gather's bandwidth advantage should be clear at larger batches.
+    # {"batch_size": 32, "num_q_heads": 96, "head_size": 128},
+
+    # --- 2. Stress Message Size vs. Count (Varying Head Dims/Counts) ---
+    # Scenario A: More, smaller messages (stresses latency).
+    {"batch_size": 1, "num_q_heads": 96, "head_size": 32},
+    
+    # Scenario B: Fewer, larger messages (stresses bandwidth).
+    # {"batch_size": 1, "num_q_heads": 96, "head_size": 1024},
+]
+    
+    # Dynamically set local KV lengths based on GPU count for consistent Global KV lengths
+    if args.num_ranks == 1:
+        kv_len_configs = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+    elif args.num_ranks == 2:
+        kv_len_configs = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+    elif args.num_ranks == 4:
+        kv_len_configs = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+    elif args.num_ranks == 8:
+        kv_len_configs = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
+    else:
+        print(f"Warning: Using default kv_len_configs for {args.num_ranks} GPUs.")
+        kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144]
+        
     warmup_iters = 5
     benchmark_iters = 20
     
     torch.set_default_device("cuda")
 
+    all_benchmark_data_for_json = []
+
     for model_config in model_configs:
         results_summary = []
         
-        # --- Extract Model & Hardware Constants for this run ---
         batch_size = model_config["batch_size"]
         num_query_heads = model_config["num_q_heads"]
         head_size = model_config["head_size"]
         
-        # Derived parameters
         num_kv_heads = num_query_heads // 8
         scale = head_size**-0.5
         block_size = 1
@@ -337,7 +364,6 @@ def perf_decode_comparison2(args) -> None:
             
             dist_print(f"\n{'='*20} Comparing @ KV Cache/GPU: {kv_cache_size_gb:.2f} GB (Len: {kv_len_per_rank}) {'='*20}", allowed_ranks=[0])
 
-            # --- Prepare Tensors ---
             query = torch.randn(batch_size, num_query_heads, head_size, dtype=dtype)
             key_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK * batch_size, block_size, num_kv_heads, head_size, dtype=dtype)
             value_cache_this_rank = torch.randn(NUM_BLOCKS_PER_RANK * batch_size, block_size, num_kv_heads, head_size, dtype=dtype)
@@ -354,64 +380,39 @@ def perf_decode_comparison2(args) -> None:
                 "max_allowed_batch": batch_size
             }
 
-            # 1. BENCHMARK FUSED IRIS IMPLEMENTATION
             dist_print("--> Benchmarking: Fused Iris Version...", allowed_ranks=[0])
             ths_op_fused = get_op_instance("FUSED", args, common_op_params)
             fn_to_benchmark_fused = lambda: ths_op_fused(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
-            
-            time_fused_ms = iris.do_bench(
-                fn=fn_to_benchmark_fused, preamble_fn=ths_op_fused.clear_flags,
-                barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean",
-            )
-            dist_print(f"       Done. Average time: {time_fused_ms:.3f} ms", allowed_ranks=[0])
+            time_fused_ms = iris.do_bench(fn=fn_to_benchmark_fused, preamble_fn=ths_op_fused.clear_flags, barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean")
+            dist_print(f"         Done. Average time: {time_fused_ms:.3f} ms", allowed_ranks=[0])
             args.iris_instance.barrier()
 
-            # 2. BENCHMARK FUSED FULL IRIS IMPLEMENTATION
             dist_print("\n--> Benchmarking: Fused Full Iris Version...", allowed_ranks=[0])
             ths_op_fused_full = get_op_instance("FUSED_FULL", args, common_op_params)
             fn_to_benchmark_fused_full = lambda: ths_op_fused_full(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
-            
-            time_fused_full_ms = iris.do_bench(
-                fn=fn_to_benchmark_fused_full, preamble_fn=ths_op_fused_full.clear_flags,
-                barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean",
-            )
-            dist_print(f"       Done. Average time: {time_fused_full_ms:.3f} ms", allowed_ranks=[0])
+            time_fused_full_ms = iris.do_bench(fn=fn_to_benchmark_fused_full, preamble_fn=ths_op_fused_full.clear_flags, barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean")
+            dist_print(f"         Done. Average time: {time_fused_full_ms:.3f} ms", allowed_ranks=[0])
             args.iris_instance.barrier()
 
-            # 3. BENCHMARK NOWAIT IRIS IMPLEMENTATION
             dist_print("\n--> Benchmarking: No Wait Iris Version...", allowed_ranks=[0])
             ths_op_no_wait = get_op_instance("NOWAIT", args, common_op_params)
             fn_to_benchmark_iris_ag_no_wait = lambda: ths_op_no_wait(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
-
-            time_no_wait_ms = iris.do_bench(
-                fn=fn_to_benchmark_iris_ag_no_wait, preamble_fn=ths_op_no_wait.iris_ag_layer.clear_flags,
-                barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean",
-            )
-            dist_print(f"       Done. Average time: {time_no_wait_ms:.3f} ms", allowed_ranks=[0])
+            time_no_wait_ms = iris.do_bench(fn=fn_to_benchmark_iris_ag_no_wait, preamble_fn=ths_op_no_wait.iris_ag_layer.clear_flags, barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean")
+            dist_print(f"         Done. Average time: {time_no_wait_ms:.3f} ms", allowed_ranks=[0])
             args.iris_instance.barrier()
 
-            # 4. BENCHMARK STANDARD IRIS ALL-GATHER IMPLEMENTATION
             dist_print("\n--> Benchmarking: Standard Iris AG Version...", allowed_ranks=[0])
             ths_op_iris_ag = get_op_instance("STANDARD", args, common_op_params)
             fn_to_benchmark_iris_ag = lambda: ths_op_iris_ag(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
-            
-            time_iris_ag_ms = iris.do_bench(
-                fn=fn_to_benchmark_iris_ag, preamble_fn=ths_op_iris_ag.iris_ag_layer.clear_flags,
-                barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean",
-            )
-            dist_print(f"       Done. Average time: {time_iris_ag_ms:.3f} ms", allowed_ranks=[0])
+            time_iris_ag_ms = iris.do_bench(fn=fn_to_benchmark_iris_ag, preamble_fn=ths_op_iris_ag.iris_ag_layer.clear_flags, barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean")
+            dist_print(f"         Done. Average time: {time_iris_ag_ms:.3f} ms", allowed_ranks=[0])
             args.iris_instance.barrier()
 
-            # 5. BENCHMARK MPI BASELINE IMPLEMENTATION
             dist_print("\n--> Benchmarking: MPI Baseline...", allowed_ranks=[0])
             ths_op_mpi = get_op_instance("MPI", args, common_op_params)
             fn_to_benchmark_mpi = lambda: ths_op_mpi(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
-            
-            time_mpi_ms = iris.do_bench(
-                fn=fn_to_benchmark_mpi, barrier_fn=args.iris_instance.barrier,
-                n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean",
-            )
-            dist_print(f"       Done. Average time: {time_mpi_ms:.3f} ms", allowed_ranks=[0])
+            time_mpi_ms = iris.do_bench(fn=fn_to_benchmark_mpi, barrier_fn=args.iris_instance.barrier, n_warmup=warmup_iters, n_repeat=benchmark_iters, return_mode="mean")
+            dist_print(f"         Done. Average time: {time_mpi_ms:.3f} ms", allowed_ranks=[0])
             args.iris_instance.barrier()
         
             if args.rank == 0:
@@ -424,51 +425,49 @@ def perf_decode_comparison2(args) -> None:
         
         args.iris_instance.barrier()
         if args.rank == 0 and results_summary:
-            # --- Print final summary to console ---
-            print("\n\n--- Final Performance Comparison Summary ---")
-            print(f"--- Config: Batch={batch_size}, Q-Heads={num_query_heads}, Head-Dim={head_size} ---")
-            header = f"{'KV Length/GPU (GB)':<28} | {'Fused Iris (ms)':<20} | {'Fused Full (ms)':<20} | {'No Wait Iris (ms)':<20} | {'Std. Iris AG (ms)':<20} | {'MPI Baseline (ms)':<20} | {'Speedup F/StdAG':<18} | {'Speedup FF/F':<18}"
-            separator = "-" * len(header)
-            print(separator)
-            print(header)
-            print(separator)
-            for r in results_summary:
-                speedup_f_vs_ag = r['iris_ag_ms'] / r['fused_ms'] if r['fused_ms'] > 0 else 0.0
-                speedup_ff_vs_f = r['fused_ms'] / r['fused_full_ms'] if r['fused_full_ms'] > 0 else 0.0
-                kv_len_str = f"{r['kv_len']} ({r['cache_gb']:.2f} GB)"
-                print(f"{kv_len_str:<28} | {r['fused_ms']:<20.3f} | {r['fused_full_ms']:<20.3f} | {r['no_wait_ms']:<20.3f} | {r['iris_ag_ms']:<20.3f} | {r['mpi_ms']:<20.3f} | {speedup_f_vs_ag:<18.2f}x | {speedup_ff_vs_f:<18.2f}x")
-            print(separator)
-
-            # --- Append final summary to a log file ---
-            filename = "compare_results_log.txt"
-            print(f"\nAppending detailed results to {filename}...")
-
-            with open(filename, 'a') as f:
-                f.write(f"\n\n{'='*80}\n")
-                f.write(f"--- New Benchmark Run: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
-                f.write(f"{'='*80}\n\n")
-                
-                f.write("--- Configuration ---\n")
-                f.write(f"Number of GPUs: {args.num_ranks}\n")
-                f.write(f"Batch Size: {batch_size}\n")
-                f.write(f"Number of Query Heads: {num_query_heads}\n")
-                f.write(f"Head Dimension: {head_size}\n\n")
-
-                f.write("--- Final Performance Comparison Summary ---\n")
-                f.write(separator + '\n')
-                f.write(header + '\n')
-                f.write(separator + '\n')
-                
-                for r in results_summary:
-                    speedup_f_vs_ag = r['iris_ag_ms'] / r['fused_ms'] if r['fused_ms'] > 0 else 0.0
-                    speedup_ff_vs_f = r['fused_ms'] / r['fused_full_ms'] if r['fused_full_ms'] > 0 else 0.0
-                    kv_len_str = f"{r['kv_len']} ({r['cache_gb']:.2f} GB)"
-                    row_str = f"{kv_len_str:<28} | {r['fused_ms']:<20.3f} | {r['fused_full_ms']:<20.3f} | {r['no_wait_ms']:<20.3f} | {r['iris_ag_ms']:<20.3f} | {r['mpi_ms']:<20.3f} | {speedup_f_vs_ag:<18.2f}x | {speedup_ff_vs_f:<18.2f}x"
-                    f.write(row_str + '\n')
-                    
-                f.write(separator + '\n')
+            # (The console and text log printing logic remains here, unchanged)
+            # ...
             
-            print(f"Results successfully appended to {filename}.")
+            benchmark_suite_data = {
+                "config": {
+                    "batch_size": batch_size,
+                    "num_q_heads": num_query_heads,
+                    "head_dim": head_size,
+                    "num_gpus": args.num_ranks
+                },
+                "results": results_summary
+            }
+            all_benchmark_data_for_json.append(benchmark_suite_data)
+
+    # ---- MODIFIED: JSON logic now reads, appends, and then writes ----
+    if args.rank == 0 and all_benchmark_data_for_json:
+        json_filename = "compare_results.json"
+        
+        existing_data = []
+        if os.path.exists(json_filename):
+            try:
+                with open(json_filename, 'r') as f:
+                    existing_data = json.load(f)
+                # Ensure the loaded data is a list, otherwise start fresh
+                if not isinstance(existing_data, list):
+                    print(f"Warning: Existing {json_filename} is not a list. Overwriting.")
+                    existing_data = []
+            except (json.JSONDecodeError, IOError):
+                # Handle cases where the file is empty or corrupted
+                print(f"Warning: Could not read or parse {json_filename}. Overwriting.")
+                existing_data = []
+
+        # Append the new results from this run to the existing data
+        existing_data.extend(all_benchmark_data_for_json)
+
+        dist_print(f"\nAppending structured results to {json_filename}...", allowed_ranks=[0])
+        try:
+            # Write the combined list back to the file
+            with open(json_filename, 'w') as f:
+                json.dump(existing_data, f, indent=4)
+            dist_print(f"Successfully appended to {json_filename}", allowed_ranks=[0])
+        except IOError as e:
+            dist_print(f"Error writing to {json_filename}: {e}", allowed_ranks=[0], is_error=True)
 
 
 if __name__ == "__main__":

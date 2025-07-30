@@ -114,6 +114,10 @@ class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
             [batch, self.num_q_heads, self.kv_split, self.v_head_dim + 1], dtype=q.dtype, device=q.device
         )
         
+        # intra_rank_stream = torch.cuda.Stream()
+        # inter_rank_stream = torch.cuda.Stream()
+        
+        # with torch.cuda.stream(intra_rank_stream):
         gqa_fwd_batch_decode_intra_rank_fused_full(
             q, k_cache, v_cache,
             self.gathered_buffer, self.signal_flags, self.iris_instance,
@@ -123,6 +127,7 @@ class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
         
         final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
         
+        # with torch.cuda.stream(inter_rank_stream):
         kk3 = kernel_fused_wait_and_combine_fused_full[(batch, self.num_q_heads)](
             self.gathered_buffer,
             final_output,

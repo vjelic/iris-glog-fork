@@ -3,6 +3,7 @@ import datetime
 import os
 import sys
 from typing import List, Optional
+import json # Added for JSON output
 
 import numpy as np
 import torch
@@ -211,16 +212,32 @@ def test_performance(args):
     
     # Define model shapes to test
     model_configs = [
-        {"batch_size": 1, "num_q_heads": 96, "head_size": 128},
-        {"batch_size": 8, "num_q_heads": 96, "head_size": 128},
-        {"batch_size": 16, "num_q_heads": 96, "head_size": 128},
-        {"batch_size": 1, "num_q_heads": 48, "head_size": 64},
-    ]
-
-    kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+    # --- 1. Stress Latency vs. Bandwidth (Varying Batch Size) ---
+    # Fused kernel should excel at low batch sizes.
+      {"batch_size": 1, "num_q_heads": 96, "head_size": 128},
+    {"batch_size": 4, "num_q_heads": 96, "head_size": 128},
     
+    # The crossover point where All-Gather may become faster is likely here.
+    {"batch_size": 8, "num_q_heads": 96, "head_size": 128},
+    {"batch_size": 1, "num_q_heads": 384, "head_size": 128},
+    # {"batch_size": 1, "num_q_heads": 768, "head_size": 128},
+    # All-Gather's bandwidth advantage should be clear at larger batches.
+    # {"batch_size": 32, "num_q_heads": 96, "head_size": 128},
+
+    # --- 2. Stress Message Size vs. Count (Varying Head Dims/Counts) ---
+    # Scenario A: More, smaller messages (stresses latency).
+    {"batch_size": 1, "num_q_heads": 96, "head_size": 32},
+    
+    # Scenario B: Fewer, larger messages (stresses bandwidth).
+    # {"batch_size": 1, "num_q_heads": 96, "head_size": 1024},
+    ]
+    # kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+    kv_len_configs = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
     dist_print(f"🚀 Benchmarking RCCL Performance on {args.num_ranks} GPUs 🚀", allowed_ranks=[0])
     torch.set_default_device("cuda")
+
+    # ---- NEW: List to hold all data for final JSON dump ----
+    all_benchmark_data_for_json = []
 
     for model_config in model_configs:
         results_summary = []
@@ -269,7 +286,7 @@ def test_performance(args):
                 return ths_op(query, key_cache_this_rank, value_cache_this_rank, global_kv_lens_tensor, block_tables_this_rank)
             
             _, time_ms = perf_func(func=func_to_benchmark, iters=benchmark_iters, warmup_iters=warmup_iters)
-            dist_print(f"       ✅ Result captured: {time_ms:.3f} ms", allowed_ranks=[0])
+            dist_print(f"         ✅ Result captured: {time_ms:.3f} ms", allowed_ranks=[0])
             
             if args.rank == 0:
                 results_summary.append({
@@ -324,6 +341,29 @@ def test_performance(args):
                 print(f"Results successfully appended to {filename}.")
             except IOError as e:
                 print(f"Error: Could not write to file {filename}. \n{e}", is_error=True)
+
+            # ---- NEW: Aggregate data for this config for the JSON file ----
+            benchmark_suite_data = {
+                "config": {
+                    "batch_size": batch_size,
+                    "num_q_heads": num_query_heads,
+                    "head_dim": head_size,
+                    "num_gpus": args.num_ranks
+                },
+                "results": results_summary
+            }
+            all_benchmark_data_for_json.append(benchmark_suite_data)
+
+    # ---- NEW: Write the final JSON file after all configs are done ----
+    if args.rank == 0 and all_benchmark_data_for_json:
+        json_filename = "rccl_perf_results.json"
+        dist_print(f"\nWriting structured results to {json_filename}...", allowed_ranks=[0])
+        try:
+            with open(json_filename, 'w') as f:
+                json.dump(all_benchmark_data_for_json, f, indent=4)
+            dist_print(f"Successfully wrote to {json_filename}", allowed_ranks=[0])
+        except IOError as e:
+            dist_print(f"Error writing to {json_filename}: {e}", allowed_ranks=[0], is_error=True)
 
 
 if __name__ == "__main__":
