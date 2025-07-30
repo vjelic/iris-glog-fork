@@ -10,6 +10,7 @@ import torch
 import torch.distributed as dist
 
 from sp_flash_decode_layer_rccl import SpGQAFlashDecodeAttentionRCCL
+from sp_flash_decode_layer_rccl_2 import SpGQAFlashDecodeAttentionRCCL2
 
 ALL_TESTS = {}
 TP_GROUP = None
@@ -214,12 +215,13 @@ def test_performance(args):
     model_configs = [
     # --- 1. Stress Latency vs. Bandwidth (Varying Batch Size) ---
     # Fused kernel should excel at low batch sizes.
+     {"batch_size": 1, "num_q_heads": 96, "head_size": 64},
       {"batch_size": 1, "num_q_heads": 96, "head_size": 128},
     {"batch_size": 4, "num_q_heads": 96, "head_size": 128},
     
     # The crossover point where All-Gather may become faster is likely here.
     {"batch_size": 8, "num_q_heads": 96, "head_size": 128},
-    {"batch_size": 1, "num_q_heads": 384, "head_size": 128},
+    # {"batch_size": 1, "num_q_heads": 384, "head_size": 128},
     # {"batch_size": 1, "num_q_heads": 768, "head_size": 128},
     # All-Gather's bandwidth advantage should be clear at larger batches.
     # {"batch_size": 32, "num_q_heads": 96, "head_size": 128},
