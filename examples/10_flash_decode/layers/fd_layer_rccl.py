@@ -1,6 +1,6 @@
 import torch
 import torch.distributed as dist
-from decode_kernels import (gqa_fwd_batch_decode_intra_rank, kernel_inter_rank_gqa_fwd_batch_decode_combine_kv)
+from decode_kernels import (gqa_local_kernels, gqa_reduce_global)
 
 class SpGQAFlashDecodeAttentionRCCL(torch.nn.Module):
     def __init__(self, rank: int, num_ranks: int, num_q_heads: int, num_kv_heads: int, q_head_dim: int, v_head_dim: int, 
@@ -49,9 +49,14 @@ class SpGQAFlashDecodeAttentionRCCL(torch.nn.Module):
             dtype=q.dtype,
             device=q.device
         )
-
         
-        gqa_fwd_batch_decode_intra_rank(
+        all_ranks_output_combine = torch.empty(
+            [self.num_ranks, batch_size, self.num_q_heads, self.v_head_dim + 1],
+            dtype=q.dtype,
+            device=q.device
+        )
+        
+        gqa_local_kernels(
             q, k_cache, v_cache,
             workspace=None,
             q_lens=[1] * batch_size,
@@ -64,12 +69,6 @@ class SpGQAFlashDecodeAttentionRCCL(torch.nn.Module):
         )
 
      
-        all_ranks_output_combine = torch.empty(
-            [self.num_ranks, batch_size, self.num_q_heads, self.v_head_dim + 1],
-            dtype=q.dtype,
-            device=q.device
-        )
-        
       
         dist.all_gather_into_tensor(
             all_ranks_output_combine,
@@ -78,7 +77,7 @@ class SpGQAFlashDecodeAttentionRCCL(torch.nn.Module):
         )
         
        
-        kernel_inter_rank_gqa_fwd_batch_decode_combine_kv[(batch_size, self.num_q_heads, 1)](
+        gqa_reduce_global[(batch_size, self.num_q_heads, 1)](
             all_ranks_output_combine,
             final_output,
             global_kv_lens,

@@ -2,7 +2,7 @@ import torch
 import os
 import numpy as np
 import iris
-from decode_kernels import (gqa_fwd_batch_decode_intra_rank, kernel_inter_rank_gqa_fwd_batch_decode_combine_kv)
+from decode_kernels import (gqa_local_kernels, gqa_reduce_global)
 from all_gather_layer import IrisAllGatherLayer
 
 class SpGQAFlashDecodeAttentionIrisAG(torch.nn.Module):
@@ -58,34 +58,23 @@ class SpGQAFlashDecodeAttentionIrisAG(torch.nn.Module):
                                    device=q.device)
         output_combine = torch.empty([batch, self.num_q_heads, self.v_head_dim + 1], dtype=q.dtype, device=q.device)
         final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
-
-        # current_stream = torch.cuda.current_stream() 
         
-        gqa_fwd_batch_decode_intra_rank(q, k_cache, v_cache, self.workspace, [1] * q.shape[0],
+        gqa_local_kernels(q, k_cache, v_cache, self.workspace, [1] * q.shape[0],
                                         global_kv_lens[self.rank], block_table, self.scale, soft_cap=self.soft_cap,
                                         output_split=output_split, output_combine=output_combine,
                                         kv_split=self.kv_split)
         ################
         # allgather part
         
-        # output_combine_numpy_flattened = output_combine.cpu().numpy().astype(np.float32).flatten()
-        # all_gathered_numpy_flattened = iris._mpi_helpers.mpi_allgather(output_combine_numpy_flattened)
-
-
-        # all_ranks_output_combine = torch.from_numpy(all_gathered_numpy_flattened).to(q.device).view(
-        #     self.num_ranks, batch, self.num_q_heads, self.v_head_dim + 1
-        # ).to(q.dtype)
-        
+        # Calling the All Gather Layer (which will use an all gather kernel)
         ag_buffer = self.iris_ag_layer.forward(output_combine.contiguous())
-        
-        # self.iris_instance.barrier()
-        
+                
         all_ranks_output_combine = ag_buffer.view(
             [self.num_ranks, batch, self.num_q_heads, self.v_head_dim + 1]
         )
         ################
         # final combine
-        kernel_inter_rank_gqa_fwd_batch_decode_combine_kv[(batch, self.num_q_heads, 1)](
+        gqa_reduce_global[(batch, self.num_q_heads, 1)](
             all_ranks_output_combine, final_output, global_kv_lens, batch, self.num_q_heads,
             all_ranks_output_combine.stride(1),  # batch
             all_ranks_output_combine.stride(2),  # head

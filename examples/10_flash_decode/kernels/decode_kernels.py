@@ -6,7 +6,7 @@ import triton.language as tl
 from triton.language.extra import libdevice
 import iris
 
-def gqa_fwd_batch_decode_intra_rank(q, k_cache, v_cache, workspace, q_lens, kv_lens, block_table, scale, soft_cap=0.0,
+def gqa_local_kernels(q, k_cache, v_cache, workspace, q_lens, kv_lens, block_table, scale, soft_cap=0.0,
                                     output_split=None, output_combine=None, kv_split=-1):
     batch, q_heads, q_head_dim = q.shape
     _, page_size, kv_heads, k_head_dim = k_cache.shape
@@ -31,7 +31,7 @@ def gqa_fwd_batch_decode_intra_rank(q, k_cache, v_cache, workspace, q_lens, kv_l
     output_combine = torch.empty([batch, q_heads, v_head_dim +
                                   1], dtype=q.dtype, device=q.device) if output_combine is None else output_combine
 
-    kernel_gqa_fwd_batch_decode_split_kv[grid_split_kv](
+    gqa_local_decode_split_k[grid_split_kv](
         q,
         k_cache,
         v_cache,
@@ -69,7 +69,7 @@ def gqa_fwd_batch_decode_intra_rank(q, k_cache, v_cache, workspace, q_lens, kv_l
         num_stages=2,
     )
 
-    kernel_intra_rank_gqa_fwd_batch_decode_combine_kv[(batch, q_heads)](
+    gqa_reduce_local[(batch, q_heads)](
         output_split,
         output_combine,
         kv_lens,
@@ -89,7 +89,7 @@ def gqa_fwd_batch_decode_intra_rank(q, k_cache, v_cache, workspace, q_lens, kv_l
 
     return output_combine
 
-def gqa_fwd_batch_decode_intra_rank_fused(
+def gqa_local_kernels_fused(
     q, k_cache, v_cache,
     
     gathered_buffer, signal_flags, iris_instance,
@@ -118,7 +118,7 @@ def gqa_fwd_batch_decode_intra_rank_fused(
             [batch, q_heads, NUM_KV_SPLITS, v_head_dim + 1], dtype=q.dtype, device=q.device
         )
 
-    kernel_gqa_fwd_batch_decode_split_kv[grid_split_kv](
+    gqa_local_decode_split_k[grid_split_kv](
         q, k_cache, v_cache, output_split, scale, block_table, kv_lens,
         batch, q.stride(0), q.stride(1),
         k_cache.stride(-3), k_cache.stride(-2), v_cache.stride(-3), v_cache.stride(-2),
@@ -131,7 +131,7 @@ def gqa_fwd_batch_decode_intra_rank_fused(
 
     # Fused Intra-Rank Combine (same as before) but this time with Intra-Node Push instead of writing the data
     grid_combine_push = (batch, q_heads)
-    kernel_intra_rank_gqa_fwd_batch_decode_combine_kv_fused[grid_combine_push](
+    gqa_local_reduce_fused[grid_combine_push](
         output_split,
         kv_lens,
         gathered_buffer,
@@ -147,7 +147,7 @@ def gqa_fwd_batch_decode_intra_rank_fused(
     )
 
 @triton.jit
-def kernel_intra_rank_gqa_fwd_batch_decode_combine_kv_fused(
+def gqa_local_reduce_fused(
     # Input
     Mid_O,
     B_Seqlen,
@@ -238,7 +238,7 @@ def gqa_fwd_batch_decode(q, k_cache, v_cache, workspace, q_lens, kv_lens, block_
     output_combine = torch.empty([batch, q_heads, v_head_dim], dtype=torch.float16,
                                  device=q.device) if output_combine is None else output_combine
 
-    kernel_gqa_fwd_batch_decode_split_kv[grid_split_kv](
+    gqa_local_decode_split_k[grid_split_kv](
         q,
         k_cache,
         v_cache,
@@ -298,7 +298,7 @@ def gqa_fwd_batch_decode(q, k_cache, v_cache, workspace, q_lens, kv_lens, block_
 
 
 @triton.jit
-def kernel_gqa_fwd_batch_decode_split_kv(
+def gqa_local_decode_split_k(
     q_ptr,
     k_cache_ptr,
     v_cache_ptr,
@@ -465,7 +465,7 @@ def kernel_gqa_fwd_batch_decode_combine_kv(
     )
 
 @triton.jit
-def kernel_intra_rank_gqa_fwd_batch_decode_combine_kv(
+def gqa_reduce_local(
     Mid_O,
     o,
     B_Seqlen,
@@ -524,7 +524,7 @@ def kernel_intra_rank_gqa_fwd_batch_decode_combine_kv(
     )
 
 @triton.jit
-def kernel_inter_rank_gqa_fwd_batch_decode_combine_kv(
+def gqa_reduce_global(
     Mid_O,
     o,
     B_Seqlens,
@@ -577,7 +577,7 @@ def kernel_inter_rank_gqa_fwd_batch_decode_combine_kv(
     )
 
 @triton.jit
-def kernel_fused_wait_and_combine_fused(
+def gqa_global_reduce_fused(
     All_Ranks_Mid_O,
     o,
     B_Seqlens,
@@ -723,7 +723,7 @@ def kernel_fused_wait_and_combine(
     
     
 @triton.jit
-def kernel_intra_rank_gqa_fwd_batch_decode_combine_kv_fused_full(
+def gqa_local_reduce_fused_full(
     # Input
     Mid_O,
     B_Seqlen,
@@ -796,7 +796,7 @@ def kernel_intra_rank_gqa_fwd_batch_decode_combine_kv_fused_full(
         iris.atomic_xchg(flag_ptr, 1, my_rank, dest_rank_id, heap_bases_ptr, sem="release")        
         
 @triton.jit
-def kernel_fused_wait_and_combine_fused_full(
+def gqa_global_reduce_fused_full(
     All_Ranks_Mid_O,
     o,
     B_Seqlens,
@@ -869,77 +869,3 @@ def kernel_fused_wait_and_combine_fused_full(
         mask=mask_d,
     )
     
-@triton.jit
-def kernel_fused_wait_and_combine_fused_full2(
-    All_Ranks_Mid_O,
-    o,
-    B_Seqlens,
-    signal_flags_ptr,
-    stride_signal_dest, stride_signal_src, stride_signal_bs, stride_signal_h,
-    batch,
-    q_heads,
-    stride_mid_ob,
-    stride_mid_oh,
-    stride_mid_os,
-    stride_obs,
-    stride_oh,
-    my_rank: tl.constexpr,
-    NUM_KV_SPLITS: tl.constexpr, # This is used as num_ranks
-    BLOCK_DV: tl.constexpr,
-    Lv: tl.constexpr,
-):
-    cur_batch = tl.program_id(0)
-    cur_head = tl.program_id(1)
-    cur_rank = tl.program_id(2)
-    
-    offs_d = tl.arange(0, BLOCK_DV)
-    mask_d = offs_d < Lv
-    cur_batch_seq_len_ptr = B_Seqlens + cur_batch
-
-    e_sum = 0.0
-    e_max = -float("inf")
-    acc = tl.zeros([BLOCK_DV], dtype=tl.float32)
-
-    # Iterate through all source ranks to gather partial results
-  
-    source_rank_id = cur_rank
-    # Wait for the specific tile from the source rank to be ready
-    flag_ptr = (signal_flags_ptr +
-                my_rank * stride_signal_dest +
-                source_rank_id * stride_signal_src +
-                cur_batch * stride_signal_bs +
-                cur_head * stride_signal_h)
-    
-    while tl.atomic_cas(flag_ptr, 0, 0, sem="acquire") == 0:
-        pass
-
-    effective_kv_len = tl.load(cur_batch_seq_len_ptr + source_rank_id * batch)
-    
-    if effective_kv_len > 0:
-        # Load the data for the tile from the source rank
-        base_ptr = cur_batch * stride_mid_ob + cur_head * stride_mid_oh + source_rank_id * stride_mid_os
-        offs_v = base_ptr + offs_d
-        offs_logic = base_ptr + Lv
-
-        tv = tl.load(All_Ranks_Mid_O + offs_v, mask=mask_d, other=0.0)
-        tlogic = tl.load(All_Ranks_Mid_O + offs_logic)
-        
-        # Combine the partial result using softmax reduction
-        n_e_max = tl.maximum(tlogic, e_max)
-        old_scale = libdevice.fast_expf(e_max - n_e_max)
-        acc *= old_scale
-        
-        exp_logic = libdevice.fast_expf(tlogic - n_e_max)
-        acc += exp_logic * tv
-
-        e_sum = e_sum * old_scale + exp_logic
-        e_max = n_e_max
-
-    final_out = acc / e_sum
-    final_out = tl.where(e_sum == 0, 0.0, final_out)
-    
-    tl.store(
-        o + cur_batch * stride_obs + cur_head * stride_oh + offs_d,
-        final_out,
-        mask=mask_d,
-    )

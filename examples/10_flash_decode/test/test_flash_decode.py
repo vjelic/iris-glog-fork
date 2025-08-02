@@ -3,14 +3,14 @@ import datetime
 import os
 import sys
 from typing import List, Optional
-import json # Added for JSON output
+import json
 
 import numpy as np
 import torch
 import iris
 import time
 
-from utils import (perf_func, dist_print)
+from utils import dist_print
 from sp_flash_decode_layer_iris import SpGQAFlashDecodeAttentionIrisAG
 from sp_flash_decode_layer import SpGQAFlashDecodeAttention
 from sp_flash_decode_layer_mpi import SpGQAFlashDecodeAttentionMPI
@@ -63,6 +63,9 @@ def ref_paged_attn(
     sliding_window: Optional[int] = None,
     soft_cap: Optional[float] = None,
 ) -> torch.Tensor:
+    """
+    Reference Torch Implementation For Flash Decode
+    """
     num_seqs = len(query_lens)
     block_tables = block_tables.cpu().numpy()
     _, block_size, num_kv_heads, head_size = key_cache.shape
@@ -122,6 +125,10 @@ def get_op_instance(impl_name, args, common_params):
 
 @register_test("correctness")
 def test_triton_decode_with_paged_kv(args) -> None:
+    """
+    Test the correctness of the implementation compared to Torch Reference
+    Set CORRECTNESS_IMPL_TO_TEST to select which implementation to test. default=FUSED_FULL
+    """
     kv_lens_per_rank = [128 * 12]
     num_heads = 96
     head_size = 128
@@ -291,33 +298,21 @@ def perf_decode_iris(args):
 
 
 @register_test("compare")
-def perf_decode_comparison2(args) -> None:
+def perf_decode_comparison(args) -> None:
     """
     Benchmarks and compares implementations across various model shapes and sequence lengths.
     """
-    # Define model shapes to test: (batch_size, num_query_heads, head_size)
+    # Define model shapes to test
     model_configs = [
-    # --- 1. Stress Latency vs. Bandwidth (Varying Batch Size) ---
-    # Fused kernel should excel at low batch sizes.
-      {"batch_size": 1, "num_q_heads": 96, "head_size": 128},
+    {"batch_size": 1, "num_q_heads": 96, "head_size": 128},
     {"batch_size": 4, "num_q_heads": 96, "head_size": 128},
-    
-    # The crossover point where All-Gather may become faster is likely here.
     {"batch_size": 8, "num_q_heads": 96, "head_size": 128},
     {"batch_size": 1, "num_q_heads": 384, "head_size": 128},
-    # {"batch_size": 1, "num_q_heads": 768, "head_size": 128},
-    # All-Gather's bandwidth advantage should be clear at larger batches.
-    # {"batch_size": 32, "num_q_heads": 96, "head_size": 128},
-
-    # --- 2. Stress Message Size vs. Count (Varying Head Dims/Counts) ---
-    # Scenario A: More, smaller messages (stresses latency).
     {"batch_size": 1, "num_q_heads": 96, "head_size": 32},
-    
-    # Scenario B: Fewer, larger messages (stresses bandwidth).
-    # {"batch_size": 1, "num_q_heads": 96, "head_size": 1024},
-]
+    ]
     
     # Dynamically set local KV lengths based on GPU count for consistent Global KV lengths
+    # This can be adjusted to avoid OOM issues
     if args.num_ranks == 1:
         kv_len_configs = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
     elif args.num_ranks == 2:
@@ -425,8 +420,7 @@ def perf_decode_comparison2(args) -> None:
         
         args.iris_instance.barrier()
         if args.rank == 0 and results_summary:
-            # (The console and text log printing logic remains here, unchanged)
-            # ...
+            # TODO Add console and text log printing logic
             
             benchmark_suite_data = {
                 "config": {
@@ -439,7 +433,6 @@ def perf_decode_comparison2(args) -> None:
             }
             all_benchmark_data_for_json.append(benchmark_suite_data)
 
-    # ---- MODIFIED: JSON logic now reads, appends, and then writes ----
     if args.rank == 0 and all_benchmark_data_for_json:
         json_filename = "compare_results.json"
         
@@ -448,16 +441,13 @@ def perf_decode_comparison2(args) -> None:
             try:
                 with open(json_filename, 'r') as f:
                     existing_data = json.load(f)
-                # Ensure the loaded data is a list, otherwise start fresh
                 if not isinstance(existing_data, list):
                     print(f"Warning: Existing {json_filename} is not a list. Overwriting.")
                     existing_data = []
             except (json.JSONDecodeError, IOError):
-                # Handle cases where the file is empty or corrupted
                 print(f"Warning: Could not read or parse {json_filename}. Overwriting.")
                 existing_data = []
 
-        # Append the new results from this run to the existing data
         existing_data.extend(all_benchmark_data_for_json)
 
         dist_print(f"\nAppending structured results to {json_filename}...", allowed_ranks=[0])
@@ -471,20 +461,12 @@ def perf_decode_comparison2(args) -> None:
 
 
 if __name__ == "__main__":
-    RANK = int(os.environ.get("RANK", 0))
-    LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
-    WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
-    LOCAL_WORLD_SIZE = int(os.environ.get("LOCAL_WORLD_SIZE", 1))
-    torch.cuda.set_device(LOCAL_RANK)
-
-    _iris_global = iris.iris() 
+    _iris = iris.iris() 
 
     args = get_args()
-    args.rank = _iris_global.get_rank()
-    args.num_ranks = _iris_global.get_num_ranks()
-    args.local_rank = LOCAL_RANK
-    args.local_num_ranks = LOCAL_WORLD_SIZE
-    args.iris_instance = _iris_global
+    args.rank = _iris.get_rank()
+    args.num_ranks = _iris.get_num_ranks()
+    args.iris_instance = _iris
     
     if args.list:
         help()
@@ -492,4 +474,4 @@ if __name__ == "__main__":
     func = ALL_TESTS[args.case]
     func(args)
 
-    _iris_global.barrier()
+    _iris.barrier()

@@ -4,12 +4,12 @@ import math
 import iris
 
 from decode_kernels import (
-    kernel_gqa_fwd_batch_decode_split_kv,
-    kernel_intra_rank_gqa_fwd_batch_decode_combine_kv_fused_full,
-    kernel_fused_wait_and_combine_fused_full
+    gqa_local_decode_split_k,
+    gqa_local_reduce_fused_full,
+    gqa_global_reduce_fused_full
 )
 
-def gqa_fwd_batch_decode_intra_rank_fused_full(
+def gqa_local_kernels_fused_full(
     q, k_cache, v_cache,
     
     gathered_buffer, signal_flags, iris_instance,
@@ -38,7 +38,7 @@ def gqa_fwd_batch_decode_intra_rank_fused_full(
             [batch, q_heads, NUM_KV_SPLITS, v_head_dim + 1], dtype=q.dtype, device=q.device
         )
 
-    kernel_gqa_fwd_batch_decode_split_kv[grid_split_kv](
+    gqa_local_decode_split_k[grid_split_kv](
         q, k_cache, v_cache, output_split, scale, block_table, kv_lens,
         batch, q.stride(0), q.stride(1),
         k_cache.stride(-3), k_cache.stride(-2), v_cache.stride(-3), v_cache.stride(-2),
@@ -51,7 +51,7 @@ def gqa_fwd_batch_decode_intra_rank_fused_full(
 
     # Step 2: Fused Intra-Rank Combine and Inter-Rank Push with tile-level signaling
     grid_combine_push = (batch, q_heads)
-    kernel_intra_rank_gqa_fwd_batch_decode_combine_kv_fused_full[grid_combine_push](
+    gqa_local_reduce_fused_full[grid_combine_push](
         output_split,
         kv_lens,
         gathered_buffer,
@@ -118,7 +118,7 @@ class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
         # inter_rank_stream = torch.cuda.Stream()
         
         # with torch.cuda.stream(intra_rank_stream):
-        gqa_fwd_batch_decode_intra_rank_fused_full(
+        gqa_local_kernels_fused_full(
             q, k_cache, v_cache,
             self.gathered_buffer, self.signal_flags, self.iris_instance,
             [1] * batch, global_kv_lens[self.rank], block_table, self.scale,
@@ -128,7 +128,7 @@ class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
         final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
         
         # with torch.cuda.stream(inter_rank_stream):
-        kk3 = kernel_fused_wait_and_combine_fused_full[(batch, self.num_q_heads)](
+        kk3 = gqa_global_reduce_fused_full[(batch, self.num_q_heads)](
             self.gathered_buffer,
             final_output,
             global_kv_lens,

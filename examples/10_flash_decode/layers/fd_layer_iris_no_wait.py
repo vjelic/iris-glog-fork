@@ -3,7 +3,7 @@ import os
 import triton
 import numpy as np
 import iris
-from decode_kernels import (gqa_fwd_batch_decode_intra_rank, kernel_fused_wait_and_combine)
+from decode_kernels import (gqa_local_kernels, kernel_fused_wait_and_combine)
 from all_gather_layer_no_wait import IrisAllGatherLayerNoWait
 
 class SpGQAFlashDecodeAttentionIrisAGNoWait(torch.nn.Module):
@@ -54,7 +54,7 @@ class SpGQAFlashDecodeAttentionIrisAGNoWait(torch.nn.Module):
         output_combine = torch.empty([batch, self.num_q_heads, self.v_head_dim + 1], dtype=q.dtype, device=q.device)
         final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
 
-        gqa_fwd_batch_decode_intra_rank(
+        gqa_local_kernels(
             q, k_cache, v_cache, self.workspace, [1] * q.shape[0],
             global_kv_lens[self.rank], block_table, self.scale, soft_cap=self.soft_cap,
             output_split=output_split, output_combine=output_combine,

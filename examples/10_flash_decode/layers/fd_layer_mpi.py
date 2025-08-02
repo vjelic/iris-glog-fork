@@ -2,12 +2,12 @@ import torch
 import os
 import numpy as np
 import iris
-from decode_kernels import (gqa_fwd_batch_decode_intra_rank, kernel_inter_rank_gqa_fwd_batch_decode_combine_kv)
+from decode_kernels import (gqa_local_kernels, gqa_reduce_global)
 
 
-class SpGQAFlashDecodeAttention(torch.nn.Module):
+class SpGQAFlashDecodeAttentionMPI(torch.nn.Module):
 
-    def __init__(self, rank, node, num_ranks, num_nodes, num_q_heads, num_kv_heads, q_head_dim, v_head_dim, page_size=1,
+    def __init__(self, iris_instance, rank, node, num_ranks, num_nodes, num_q_heads, num_kv_heads, q_head_dim, v_head_dim, page_size=1,
                  scale=1, soft_cap=0, max_allowed_batch=1, thrink_buffer_threshold=500, stages=20):
         super().__init__()
         self.rank = rank
@@ -27,7 +27,7 @@ class SpGQAFlashDecodeAttention(torch.nn.Module):
         self.max_allowed_batch = max_allowed_batch
         self.stages = stages
 
-        self.iris_instance = iris.Iris(heap_size=1 << 30) 
+        self.iris_instance = iris_instance
 
         self.count_less_than_half = 0
         self.shrink_buffer_threshold = thrink_buffer_threshold
@@ -56,9 +56,8 @@ class SpGQAFlashDecodeAttention(torch.nn.Module):
         output_combine = torch.empty([batch, self.num_q_heads, self.v_head_dim + 1], dtype=q.dtype, device=q.device)
         final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
 
-        current_stream = torch.cuda.current_stream() 
         
-        gqa_fwd_batch_decode_intra_rank(q, k_cache, v_cache, self.workspace, [1] * q.shape[0],
+        gqa_local_kernels(q, k_cache, v_cache, self.workspace, [1] * q.shape[0],
                                         global_kv_lens[self.rank], block_table, self.scale, soft_cap=self.soft_cap,
                                         output_split=output_split, output_combine=output_combine,
                                         kv_split=self.kv_split)
@@ -75,7 +74,7 @@ class SpGQAFlashDecodeAttention(torch.nn.Module):
 
         ################
         # final combine
-        kernel_inter_rank_gqa_fwd_batch_decode_combine_kv[(batch, self.num_q_heads, 1)](
+        gqa_reduce_global[(batch, self.num_q_heads, 1)](
             all_ranks_output_combine, final_output, global_kv_lens, batch, self.num_q_heads,
             all_ranks_output_combine.stride(1),  # batch
             all_ranks_output_combine.stride(2),  # head
