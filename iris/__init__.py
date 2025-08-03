@@ -9,7 +9,6 @@ import torch
 from .iris import (
     Iris,
     iris,
-    translate,
     load,
     store,
     get,
@@ -49,7 +48,6 @@ torch.cuda.memory.change_current_allocator(finegrained_allocator)
 __all__ = [
     "Iris",
     "iris",
-    "translate",
     "load",
     "store",
     "get",
@@ -60,5 +58,5 @@ __all__ = [
     "atomic_xchg",
     "do_bench",
     "memset_tensor",
-    "hip"
+    "hip",
 ]
