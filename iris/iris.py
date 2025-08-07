@@ -33,8 +33,6 @@ ERROR = logging.ERROR
 # Legacy global variables for backward compatibility
 STATS = True
 LOGGING = True
-# Note: DEBUG renamed to _DEBUG_GLOBAL to avoid conflict with new DEBUG constant
-_DEBUG_GLOBAL = False
 
 # Set up iris logger
 _iris_logger = logging.getLogger("iris")
@@ -113,8 +111,7 @@ class Iris:
             _iris_logger.info(f"[{self.cur_rank}/{self.num_ranks}] {message}")
 
     def log_debug(self, message):
-        # Use either the global variable (for backward compatibility) or the logging level
-        if _DEBUG_GLOBAL or _iris_logger.isEnabledFor(logging.DEBUG):
+        if _iris_logger.isEnabledFor(logging.DEBUG):
             _iris_logger.debug(f"[{self.cur_rank}/{self.num_ranks}] {message}")
 
     def log_stats(self, message):
