@@ -70,16 +70,26 @@ def test_iris_debug_logging(mock_logger):
                                         iris_instance.cur_rank = 0
                                         iris_instance.num_ranks = 1
 
+                                        # Mock the logger.handle method since convenience methods use it
+                                        mock_logger.isEnabledFor.return_value = True
+                                        mock_logger.handle = MagicMock()
+
                                         # Test allocate method debug logging
                                         iris_instance.allocate(100, None)
-                                        mock_logger.debug.assert_called_with(
-                                            "[0/1] allocate: num_elements = 100, dtype = None"
-                                        )
+                                        
+                                        # Check that handle was called with a LogRecord containing rank info
+                                        mock_logger.handle.assert_called_once()
+                                        call_args = mock_logger.handle.call_args[0][0]
+                                        assert hasattr(call_args, 'iris_rank')
+                                        assert hasattr(call_args, 'iris_num_ranks')
+                                        assert call_args.iris_rank == 0
+                                        assert call_args.iris_num_ranks == 1
+                                        assert "allocate: num_elements = 100, dtype = None" in call_args.msg
 
 
 def test_logger_api_usage():
     """Test direct logger API usage."""
-    from iris.iris import logger, set_logger_level, DEBUG, INFO
+    from iris.iris import logger, set_logger_level, DEBUG, INFO, IrisFormatter
 
     # Capture log output
     import io
@@ -87,7 +97,7 @@ def test_logger_api_usage():
 
     log_capture = io.StringIO()
     handler = logging.StreamHandler(log_capture)
-    handler.setFormatter(logging.Formatter("[Iris] %(message)s"))
+    handler.setFormatter(IrisFormatter())
 
     # Remove existing handlers and add our capture handler
     logger.handlers.clear()
@@ -108,6 +118,44 @@ def test_logger_api_usage():
     lines = output.split("\n")
     hidden_debug_count = sum(1 for line in lines if "should be hidden" in line)
     assert hidden_debug_count == 0
+
+
+def test_iris_formatter():
+    """Test the IrisFormatter behavior."""
+    from iris.iris import IrisFormatter
+    import logging
+
+    formatter = IrisFormatter()
+
+    # Test record without rank information
+    record_no_rank = logging.LogRecord(
+        name="iris",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="Test message without rank",
+        args=(),
+        exc_info=None
+    )
+
+    formatted_no_rank = formatter.format(record_no_rank)
+    assert formatted_no_rank == "[Iris] Test message without rank"
+
+    # Test record with rank information
+    record_with_rank = logging.LogRecord(
+        name="iris",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="Test message with rank",
+        args=(),
+        exc_info=None
+    )
+    record_with_rank.iris_rank = 2
+    record_with_rank.iris_num_ranks = 4
+
+    formatted_with_rank = formatter.format(record_with_rank)
+    assert formatted_with_rank == "[Iris] [2/4] Test message with rank"
 
 
 def test_api_import():
@@ -135,4 +183,5 @@ if __name__ == "__main__":
     test_set_logger_level()
     test_logger_setup()
     test_logger_api_usage()
+    test_iris_formatter()
     print("All basic logging tests passed!")
