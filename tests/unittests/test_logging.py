@@ -22,36 +22,36 @@ def test_logging_constants():
 
 def test_set_logger_level():
     """Test the set_logger_level function."""
-    from iris.iris import set_logger_level, _iris_logger, DEBUG, INFO
+    from iris.iris import set_logger_level, logger, DEBUG, INFO
     
     # Test setting different levels
     set_logger_level(DEBUG)
-    assert _iris_logger.level == logging.DEBUG
+    assert logger.level == logging.DEBUG
     
     set_logger_level(INFO)
-    assert _iris_logger.level == logging.INFO
+    assert logger.level == logging.INFO
 
 
 def test_logger_setup():
     """Test that the iris logger is properly configured."""
-    from iris.iris import _iris_logger
+    from iris.iris import logger
     
     # Verify logger name
-    assert _iris_logger.name == "iris"
+    assert logger.name == "iris"
     
     # Verify default level
-    assert _iris_logger.level == logging.INFO
+    assert logger.level == logging.INFO
     
     # Verify handler exists
-    assert len(_iris_logger.handlers) > 0
+    assert len(logger.handlers) > 0
     
     # Verify handler is a StreamHandler
-    assert isinstance(_iris_logger.handlers[0], logging.StreamHandler)
+    assert isinstance(logger.handlers[0], logging.StreamHandler)
 
 
-@patch('iris.iris._iris_logger')
-def test_iris_log_methods_with_logging(mock_logger):
-    """Test that Iris log methods use Python logging when conditions are met."""
+@patch('iris.iris.logger')
+def test_iris_debug_logging(mock_logger):
+    """Test that Iris debug logging uses Python logger directly."""
     # Mock the MPI and other dependencies to create a minimal Iris instance
     with patch('iris.iris.init_mpi', return_value=(None, 0, 1)):
         with patch('iris.iris.count_devices', return_value=1):
@@ -62,51 +62,60 @@ def test_iris_log_methods_with_logging(mock_logger):
                             with patch('iris.iris.mpi_allgather', return_value=[]):
                                 with patch('iris.iris.open_ipc_handle'):
                                     with patch('iris.iris.torch.from_numpy'):
-                                        from iris.iris import Iris, LOGGING, STATS, _DEBUG_GLOBAL
+                                        from iris.iris import Iris
                                         
                                         # Create a minimal Iris instance
                                         iris_instance = Iris.__new__(Iris)
                                         iris_instance.cur_rank = 0
                                         iris_instance.num_ranks = 1
                                         
-                                        # Test log method
-                                        if LOGGING:
-                                            iris_instance.log("test message")
-                                            mock_logger.info.assert_called_with("[0/1] test message")
-                                        
-                                        # Test log_debug method
-                                        if _DEBUG_GLOBAL:
-                                            iris_instance.log_debug("debug message") 
-                                            mock_logger.debug.assert_called_with("[0/1] debug message")
-                                        
-                                        # Test log_stats method
-                                        if STATS:
-                                            iris_instance.log_stats("stats message")
-                                            mock_logger.info.assert_called_with("[0/1] stats message")
+                                        # Test allocate method debug logging
+                                        iris_instance.allocate(100, None)
+                                        mock_logger.debug.assert_called_with("[0/1] allocate: num_elements = 100, dtype = None")
 
 
-def test_backward_compatibility_global_variables():
-    """Test that global variables still exist for backward compatibility."""
-    from iris.iris import STATS, LOGGING, _DEBUG_GLOBAL
+def test_logger_api_usage():
+    """Test direct logger API usage."""
+    from iris.iris import logger, set_logger_level, DEBUG, INFO
     
-    # Verify the global variables exist and have expected types
-    assert isinstance(STATS, bool)
-    assert isinstance(LOGGING, bool) 
-    assert isinstance(_DEBUG_GLOBAL, bool)
+    # Capture log output
+    import io
+    import logging
     
-    # Verify default values
-    assert STATS == True
-    assert LOGGING == True
-    assert _DEBUG_GLOBAL == False
+    log_capture = io.StringIO()
+    handler = logging.StreamHandler(log_capture)
+    handler.setFormatter(logging.Formatter('[Iris] %(message)s'))
+    
+    # Remove existing handlers and add our capture handler
+    logger.handlers.clear()
+    logger.addHandler(handler)
+    
+    # Test logging at different levels
+    set_logger_level(INFO)
+    logger.info("Test info message")
+    logger.debug("Test debug message (should be hidden)")
+    
+    set_logger_level(DEBUG) 
+    logger.debug("Test debug message (should be visible)")
+    
+    output = log_capture.getvalue()
+    assert "[Iris] Test info message" in output
+    assert "[Iris] Test debug message (should be visible)" in output
+    # The hidden debug message should not appear
+    lines = output.split('\n')
+    hidden_debug_count = sum(1 for line in lines if "should be hidden" in line)
+    assert hidden_debug_count == 0
 
 
 def test_api_import():
     """Test that the new API can be imported from the main iris module."""
     # This test verifies the __init__.py exports work correctly
     try:
-        from iris import set_logger_level, DEBUG, INFO, WARNING, ERROR
+        from iris import set_logger_level, logger, DEBUG, INFO, WARNING, ERROR
         # If we get here, the imports worked
         assert set_logger_level is not None
+        assert logger is not None
+        assert logger.name == "iris"
         assert DEBUG == logging.DEBUG
         assert INFO == logging.INFO
         assert WARNING == logging.WARNING
@@ -121,5 +130,5 @@ if __name__ == "__main__":
     test_logging_constants()
     test_set_logger_level()
     test_logger_setup()
-    test_backward_compatibility_global_variables()
+    test_logger_api_usage()
     print("All basic logging tests passed!")
