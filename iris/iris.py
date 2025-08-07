@@ -28,6 +28,26 @@ LOGGING = True
 DEBUG = False
 
 
+class IrisTensor(torch.Tensor):
+    def __new__(cls, tensor, offset, size_bytes, iris):
+        # Create the subclass tensor
+        result = tensor.as_subclass(cls)
+        # Store a strong reference to the original tensor to prevent premature deallocation
+        #result._original_tensor = tensor
+        # Store a reference to this IrisTensor in the underlying tensor to prevent garbage collection
+        tensor._iris_tensor = result
+        return result
+
+    def __init__(self, tensor, offset, size_bytes, iris):
+        self._iris_offset = offset
+        self._iris_size = size_bytes
+        self._iris_ref = iris
+
+    def __del__(self):
+        if hasattr(self, "_iris_ref") and self._iris_ref is not None:
+            print(f"DEBUG: IrisTensor.__del__ called for offset {self._iris_offset}, size {self._iris_size}")
+            self._iris_ref._deallocate(self._iris_offset, self._iris_size)
+
 class Iris:
     def __init__(self, heap_size=1 << 30):
         # Initialize
@@ -46,6 +66,9 @@ class Iris:
         self.alignment = 1024
         self.device = f"cuda:{gpu_id}"
         self.memory_pool = torch.empty(heap_size, device=self.device, dtype=torch.int8)
+        
+        # Add free list for memory reuse
+        self.free_list = []
 
         heap_base = self.memory_pool.data_ptr()
         heap_base_ptr = ctypes.c_void_p(heap_base)
@@ -93,6 +116,15 @@ class Iris:
     def broadcast(self, value, source_rank):
         return mpi_broadcast_scalar(value, source_rank)
 
+    def _deallocate(self, offset, size):
+        """Add deallocated memory to the free list for reuse"""
+        self.log_debug(f"_deallocate: offset = {offset}, size = {size}")
+        self.free_list.append((offset, size))
+        # Sort free list by offset for better coalescing
+        self.free_list.sort(key=lambda x: x[0])
+
+
+
     def allocate(self, num_elements, dtype):
         self.log_debug(f"allocate: num_elements = {num_elements}, dtype = {dtype}")
 
@@ -100,14 +132,24 @@ class Iris:
         size_in_bytes = num_elements * element_size
         aligned_size = math.ceil(size_in_bytes / self.alignment) * self.alignment
 
+        # Try to reuse from free list
+        for i, (offset, size) in enumerate(self.free_list):
+            if size >= aligned_size:
+                del self.free_list[i]
+                # Create tensor directly from memory pool slice
+                tensor_data = self.memory_pool[offset : offset + size_in_bytes].view(dtype).reshape((num_elements,))
+                return IrisTensor(tensor_data, offset, aligned_size, self)
+
+        # Allocate new memory from heap
         if self.heap_offset + aligned_size > self.heap_size:
             raise MemoryError("Heap out of memory")
 
         start = self.heap_offset
         self.heap_offset += aligned_size
 
-        sub_buffer = self.memory_pool[start : start + size_in_bytes].view(dtype)
-        return sub_buffer.reshape((num_elements,))
+        # Create tensor directly from memory pool slice
+        tensor_data = self.memory_pool[start : start + size_in_bytes].view(dtype).reshape((num_elements,))
+        return IrisTensor(tensor_data, start, aligned_size, self)
 
     def parse_size(self, size):
         if len(size) == 1 and isinstance(size[0], (tuple, list)):
@@ -286,6 +328,8 @@ class Iris:
 
     def get_num_ranks(self):
         return self.num_ranks
+
+
 
     def __throw_if_invalid_output_tensor(self, tensor: torch.Tensor, num_elements: int, dtype: torch.dtype):
         if not self.__tensor_on_device(tensor):
