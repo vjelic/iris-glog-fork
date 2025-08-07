@@ -176,7 +176,9 @@ def main():
                 idx = tuple(idx.tolist())
                 computed_val = destination_buffer[idx]
                 expected_val = expected[idx]
-                iris.logger.info(f"[{cur_rank}/{world_size}] Mismatch at index {idx}: C={computed_val}, expected={expected_val}")
+                iris.logger.info(
+                    f"[{cur_rank}/{world_size}] Mismatch at index {idx}: C={computed_val}, expected={expected_val}"
+                )
                 success = False
                 break
 

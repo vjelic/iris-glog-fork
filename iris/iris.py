@@ -39,7 +39,7 @@ logger.setLevel(logging.INFO)  # Default level
 # Add a console handler if none exists
 if not logger.handlers:
     _console_handler = logging.StreamHandler()
-    _formatter = logging.Formatter('[Iris] %(message)s')
+    _formatter = logging.Formatter("[Iris] %(message)s")
     _console_handler.setFormatter(_formatter)
     logger.addHandler(_console_handler)
 
@@ -153,7 +153,9 @@ class Iris:
             device (torch.device, optional): the desired device of returned tensor.
             requires_grad (bool, optional): If autograd should record operations on the returned tensor. Default: False.
         """
-        logger.debug(f"[{self.cur_rank}/{self.num_ranks}] arange: start = {start}, end = {end}, step = {step}, dtype = {dtype}")
+        logger.debug(
+            f"[{self.cur_rank}/{self.num_ranks}] arange: start = {start}, end = {end}, step = {step}, dtype = {dtype}"
+        )
 
         # Handle the case where only one argument is provided (end)
         if end is None:
@@ -178,7 +180,9 @@ class Iris:
         return tensor
 
     def zeros(self, *size, dtype=torch.int, device=None, requires_grad=False, **kwargs):
-        logger.debug(f"[{self.cur_rank}/{self.num_ranks}] zeros: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}")
+        logger.debug(
+            f"[{self.cur_rank}/{self.num_ranks}] zeros: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.zero_()
@@ -221,7 +225,9 @@ class Iris:
             device (torch.device, optional): the desired device of returned tensor. Default: if None, uses the current device for the default tensor type.
             requires_grad (bool, optional): If autograd should record operations on the returned tensor. Default: False.
         """
-        logger.debug(f"[{self.cur_rank}/{self.num_ranks}] ones: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}")
+        logger.debug(
+            f"[{self.cur_rank}/{self.num_ranks}] ones: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}"
+        )
 
         # Handle the case where size is provided as a single tuple/list
         if len(size) == 1 and isinstance(size[0], (tuple, list)):
@@ -244,14 +250,18 @@ class Iris:
         return tensor.reshape(size)
 
     def full(self, size, fill_value, dtype=torch.int):
-        logger.debug(f"[{self.cur_rank}/{self.num_ranks}] full: size = {size}, fill_value = {fill_value}, dtype = {dtype}")
+        logger.debug(
+            f"[{self.cur_rank}/{self.num_ranks}] full: size = {size}, fill_value = {fill_value}, dtype = {dtype}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.fill_(fill_value)
         return tensor.reshape(size)
 
     def uniform(self, size, low=0.0, high=1.0, dtype=torch.float):
-        logger.debug(f"[{self.cur_rank}/{self.num_ranks}] uniform: size = {size}, low = {low}, high = {high}, dtype = {dtype}")
+        logger.debug(
+            f"[{self.cur_rank}/{self.num_ranks}] uniform: size = {size}, low = {low}, high = {high}, dtype = {dtype}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.uniform_(low, high)
@@ -264,14 +274,18 @@ class Iris:
         return tensor.reshape(size)
 
     def randint(self, size, low, high, dtype=torch.int):
-        logger.debug(f"[{self.cur_rank}/{self.num_ranks}] randint: size = {size}, low = {low}, high = {high}, dtype = {dtype}")
+        logger.debug(
+            f"[{self.cur_rank}/{self.num_ranks}] randint: size = {size}, low = {low}, high = {high}, dtype = {dtype}"
+        )
         size, num_elements = self.parse_size(size)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor[:] = torch.randint(low, high, size, device="cuda", dtype=dtype)
         return tensor.reshape(size)
 
     def linspace(self, start, end, steps, dtype=torch.float):
-        logger.debug(f"[{self.cur_rank}/{self.num_ranks}] linspace: start = {start}, end = {end}, steps = {steps}, dtype = {dtype}")
+        logger.debug(
+            f"[{self.cur_rank}/{self.num_ranks}] linspace: start = {start}, end = {end}, steps = {steps}, dtype = {dtype}"
+        )
         size, num_elements = self.parse_size(steps)
         tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         torch.linspace(start, end, size, out=tensor, dtype=dtype, device="cuda")
