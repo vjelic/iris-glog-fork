@@ -22,10 +22,40 @@ import numpy as np
 import math
 import torch
 import ctypes
+import logging
 
+# Logging constants (compatible with Python logging levels)
+DEBUG = logging.DEBUG
+INFO = logging.INFO
+WARNING = logging.WARNING
+ERROR = logging.ERROR
+
+# Legacy global variables for backward compatibility
 STATS = True
 LOGGING = True
-DEBUG = False
+# Note: DEBUG renamed to _DEBUG_GLOBAL to avoid conflict with new DEBUG constant
+_DEBUG_GLOBAL = False
+
+# Set up iris logger
+_iris_logger = logging.getLogger("iris")
+_iris_logger.setLevel(logging.INFO)  # Default level
+
+# Add a console handler if none exists
+if not _iris_logger.handlers:
+    _console_handler = logging.StreamHandler()
+    _formatter = logging.Formatter('[Iris] %(message)s')
+    _console_handler.setFormatter(_formatter)
+    _iris_logger.addHandler(_console_handler)
+
+
+def set_logger_level(level):
+    """
+    Set the logging level for the iris logger.
+
+    Args:
+        level: Logging level (iris.DEBUG, iris.INFO, iris.WARNING, iris.ERROR)
+    """
+    _iris_logger.setLevel(level)
 
 
 class Iris:
@@ -80,15 +110,16 @@ class Iris:
 
     def log(self, message):
         if LOGGING:
-            print(f"[Iris] [{self.cur_rank}/{self.num_ranks}] {message}")
+            _iris_logger.info(f"[{self.cur_rank}/{self.num_ranks}] {message}")
 
     def log_debug(self, message):
-        if DEBUG:
-            print(f"[Iris] [{self.cur_rank}/{self.num_ranks}] {message}")
+        # Use either the global variable (for backward compatibility) or the logging level
+        if _DEBUG_GLOBAL or _iris_logger.isEnabledFor(logging.DEBUG):
+            _iris_logger.debug(f"[{self.cur_rank}/{self.num_ranks}] {message}")
 
     def log_stats(self, message):
         if STATS:
-            print(f"[Iris] [{self.cur_rank}/{self.num_ranks}] {message}")
+            _iris_logger.info(f"[{self.cur_rank}/{self.num_ranks}] {message}")
 
     def broadcast(self, value, source_rank):
         return mpi_broadcast_scalar(value, source_rank)

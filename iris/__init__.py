@@ -17,6 +17,11 @@ from .iris import (
     atomic_sub,
     atomic_cas,
     atomic_xchg,
+    set_logger_level,
+    DEBUG,
+    INFO,
+    WARNING,
+    ERROR,
 )
 
 from .util import (
@@ -59,4 +64,9 @@ __all__ = [
     "do_bench",
     "memset_tensor",
     "hip",
+    "set_logger_level",
+    "DEBUG",
+    "INFO",
+    "WARNING",
+    "ERROR",
 ]
