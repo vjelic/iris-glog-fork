@@ -33,7 +33,7 @@ class IrisTensor(torch.Tensor):
         # Create the subclass tensor
         result = tensor.as_subclass(cls)
         # Store a strong reference to the original tensor to prevent premature deallocation
-        #result._original_tensor = tensor
+        # result._original_tensor = tensor
         # Store a reference to this IrisTensor in the underlying tensor to prevent garbage collection
         tensor._iris_tensor = result
         return result
@@ -47,6 +47,7 @@ class IrisTensor(torch.Tensor):
         if hasattr(self, "_iris_ref") and self._iris_ref is not None:
             print(f"DEBUG: IrisTensor.__del__ called for offset {self._iris_offset}, size {self._iris_size}")
             self._iris_ref._deallocate(self._iris_offset, self._iris_size)
+
 
 class Iris:
     def __init__(self, heap_size=1 << 30):
@@ -66,7 +67,7 @@ class Iris:
         self.alignment = 1024
         self.device = f"cuda:{gpu_id}"
         self.memory_pool = torch.empty(heap_size, device=self.device, dtype=torch.int8)
-        
+
         # Add free list for memory reuse
         self.free_list = []
 
@@ -122,8 +123,6 @@ class Iris:
         self.free_list.append((offset, size))
         # Sort free list by offset for better coalescing
         self.free_list.sort(key=lambda x: x[0])
-
-
 
     def allocate(self, num_elements, dtype):
         self.log_debug(f"allocate: num_elements = {num_elements}, dtype = {dtype}")
@@ -328,8 +327,6 @@ class Iris:
 
     def get_num_ranks(self):
         return self.num_ranks
-
-
 
     def __throw_if_invalid_output_tensor(self, tensor: torch.Tensor, num_elements: int, dtype: torch.dtype):
         if not self.__tensor_on_device(tensor):
