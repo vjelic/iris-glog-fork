@@ -3,7 +3,7 @@ import triton
 import math
 import iris
 
-from decode_kernels import (
+from kernels.decode_kernels import (
     gqa_local_decode_split_k,
     gqa_local_reduce_fused,
     gqa_global_reduce_fused

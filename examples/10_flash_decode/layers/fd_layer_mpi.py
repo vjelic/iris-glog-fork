@@ -2,7 +2,7 @@ import torch
 import os
 import numpy as np
 import iris
-from decode_kernels import (gqa_local_kernels, gqa_reduce_global)
+from kernels.decode_kernels import (gqa_local_kernels, gqa_reduce_global)
 
 
 class SpGQAFlashDecodeAttentionMPI(torch.nn.Module):

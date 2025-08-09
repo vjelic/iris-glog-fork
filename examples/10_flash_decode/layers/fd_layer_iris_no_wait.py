@@ -3,8 +3,8 @@ import os
 import triton
 import numpy as np
 import iris
-from decode_kernels import (gqa_local_kernels, kernel_fused_wait_and_combine)
-from all_gather_layer_no_wait import IrisAllGatherLayerNoWait
+from kernels.decode_kernels import (gqa_local_kernels, kernel_fused_wait_and_combine)
+from layers.all_gather_layer_no_wait import IrisAllGatherLayerNoWait
 
 class SpGQAFlashDecodeAttentionIrisAGNoWait(torch.nn.Module):
 

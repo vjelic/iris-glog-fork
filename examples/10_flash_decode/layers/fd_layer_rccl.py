@@ -1,6 +1,6 @@
 import torch
 import torch.distributed as dist
-from decode_kernels import (gqa_local_kernels, gqa_reduce_global)
+from kernels.decode_kernels import (gqa_local_kernels, gqa_reduce_global)
 
 class SpGQAFlashDecodeAttentionRCCL(torch.nn.Module):
     def __init__(self, rank: int, num_ranks: int, num_q_heads: int, num_kv_heads: int, q_head_dim: int, v_head_dim: int, 

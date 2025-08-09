@@ -3,7 +3,7 @@ import triton
 import math
 import iris
 
-from decode_kernels import (
+from kernels.decode_kernels import (
     gqa_local_decode_split_k,
     gqa_local_reduce_fused_full,
     gqa_global_reduce_fused_full
@@ -38,6 +38,7 @@ def gqa_local_kernels_fused_full(
             [batch, q_heads, NUM_KV_SPLITS, v_head_dim + 1], dtype=q.dtype, device=q.device
         )
 
+    torch.cuda.nvtx.range_push("local_split")
     gqa_local_decode_split_k[grid_split_kv](
         q, k_cache, v_cache, output_split, scale, block_table, kv_lens,
         batch, q.stride(0), q.stride(1),
@@ -48,9 +49,11 @@ def gqa_local_kernels_fused_full(
         page_size, soft_cap, k_head_dim, v_head_dim,
         num_warps=4, num_stages=2
     )
+    torch.cuda.nvtx.range_pop()
 
     # Step 2: Fused Intra-Rank Combine and Inter-Rank Push with tile-level signaling
     grid_combine_push = (batch, q_heads)
+    torch.cuda.nvtx.range_push("local_combine")
     gqa_local_reduce_fused_full[grid_combine_push](
         output_split,
         kv_lens,
@@ -67,6 +70,7 @@ def gqa_local_kernels_fused_full(
         BLOCK_DV,
         v_head_dim,
     )
+    torch.cuda.nvtx.range_pop()
 
 class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
     def __init__(self, iris_instance, rank, node, num_ranks, num_nodes, num_q_heads, num_kv_heads, q_head_dim, v_head_dim, page_size=1,
@@ -128,6 +132,7 @@ class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
         final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
         
         # with torch.cuda.stream(inter_rank_stream):
+        torch.cuda.nvtx.range_push("final_combine")
         kk3 = gqa_global_reduce_fused_full[(batch, self.num_q_heads)](
             self.gathered_buffer,
             final_output,
@@ -149,7 +154,8 @@ class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
             self.BLOCK_DV,
             self.v_head_dim,
         )
-        
+        torch.cuda.nvtx.range_pop()
+
         # print(f"{kk3.n_regs} registers used third, {kk3.n_spills} spills")
 
         # self.clear_flags()

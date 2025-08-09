@@ -1,7 +1,7 @@
 import torch
 import triton
 import iris
-from all_gather_push_kernel import iris_allgather_push_kernel_no_wait
+from kernels.all_gather_push_kernel import iris_allgather_push_kernel_no_wait
 
 class IrisAllGatherLayerNoWait:
     def __init__(self, iris_instance: iris.Iris, max_buffer_size: int, dtype: torch.dtype):

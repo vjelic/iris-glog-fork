@@ -10,16 +10,16 @@ import torch
 import iris
 import time
 
-from utils import dist_print
-from sp_flash_decode_layer_iris import SpGQAFlashDecodeAttentionIrisAG
-from sp_flash_decode_layer import SpGQAFlashDecodeAttention
-from sp_flash_decode_layer_mpi import SpGQAFlashDecodeAttentionMPI
-from sp_flash_decode_layer_iris_no_wait import SpGQAFlashDecodeAttentionIrisAGNoWait
-from sp_flash_decode_layer_iris_fused import SpGQAFlashDecodeAttentionIrisFused
-from sp_flash_decode_layer_iris_fused_full import SpGQAFlashDecodeAttentionIrisFusedFull
+from utils.utils import dist_print
+from layers.fd_layer_iris_ag_kernel import SpGQAFlashDecodeAttentionIrisAG
+from layers.fd_layer_mpi import SpGQAFlashDecodeAttentionMPI
+from layers.fd_layer_iris_no_wait import SpGQAFlashDecodeAttentionIrisAGNoWait
+from layers.fd_layer_iris_fused_nonoptimized import SpGQAFlashDecodeAttentionIrisFused
+from layers.fd_layer_iris_fused_full import SpGQAFlashDecodeAttentionIrisFusedFull
+from layers.fd_layer_iris_fused_persistent import SpGQAFlashDecodeAttentionIrisFusedPersistent
 
-CORRECTNESS_IMPL_TO_TEST = "FUSED_FULL"
-PERF_IMPLS_TO_TEST = ["FUSED", "FUSED_FULL"]
+CORRECTNESS_IMPL_TO_TEST = "FUSED_PERSISTENT"
+PERF_IMPLS_TO_TEST = ["FUSED_FULL", "FUSED_PERSISTENT"]
 
 ALL_TESTS = {}
 
@@ -109,6 +109,8 @@ def ref_paged_attn(
 
 
 def get_op_instance(impl_name, args, common_params):
+    if impl_name == "FUSED_PERSISTENT":
+        return SpGQAFlashDecodeAttentionIrisFusedPersistent(args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks, args.num_ranks // args.local_num_ranks, **common_params)
     if impl_name == "FUSED":
         return SpGQAFlashDecodeAttentionIrisFused(args.iris_instance, args.rank, args.rank // args.local_num_ranks, args.num_ranks, args.num_ranks // args.local_num_ranks, **common_params)
     elif impl_name == "FUSED_FULL":
@@ -152,7 +154,7 @@ def test_triton_decode_with_paged_kv(args) -> None:
     }
     ths_op = get_op_instance(CORRECTNESS_IMPL_TO_TEST, args, common_params)
     
-    for i in range(3):
+    for i in range(1):
         iris_instance.barrier()
         if hasattr(ths_op, 'clear_flags'):
             ths_op.clear_flags()
@@ -228,6 +230,7 @@ def perf_decode_iris(args):
     Benchmarks the selected implementations across various, extremely large sequence lengths.
     """
     kv_len_configs = [8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+    # kv_len_configs = [131072]
     full_results = []
 
     for kv_len_per_rank in kv_len_configs:
@@ -465,13 +468,18 @@ if __name__ == "__main__":
 
     args = get_args()
     args.rank = _iris.get_rank()
+    args.local_num_ranks = _iris.get_num_ranks()
     args.num_ranks = _iris.get_num_ranks()
     args.iris_instance = _iris
     
     if args.list:
         help()
         sys.exit()
-    func = ALL_TESTS[args.case]
-    func(args)
+    if args.case:
+        if args.case in ALL_TESTS:
+            func = ALL_TESTS[args.case]
+            func(args)
+        else:
+            print(f"Error: Case '{args.case}' not found in ALL_TESTS.")
 
     _iris.barrier()

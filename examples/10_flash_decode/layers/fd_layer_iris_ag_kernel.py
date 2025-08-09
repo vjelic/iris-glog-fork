@@ -2,8 +2,8 @@ import torch
 import os
 import numpy as np
 import iris
-from decode_kernels import (gqa_local_kernels, gqa_reduce_global)
-from all_gather_layer import IrisAllGatherLayer
+from kernels.decode_kernels import (gqa_local_kernels, gqa_reduce_global)
+from layers.all_gather_layer import IrisAllGatherLayer
 
 class SpGQAFlashDecodeAttentionIrisAG(torch.nn.Module):
 
