@@ -9,7 +9,6 @@ import torch
 from .iris import (
     Iris,
     iris,
-    translate,
     load,
     store,
     get,
@@ -18,6 +17,8 @@ from .iris import (
     atomic_sub,
     atomic_cas,
     atomic_xchg,
+    atomic_xor,
+    atomic_or
 )
 
 from .util import (
@@ -25,10 +26,12 @@ from .util import (
     memset_tensor,
 )
 
+from . import hip
+
 # Pipe allocations via finegrained allocator
 current_dir = os.path.dirname(__file__)
 # Look for the library in the installed package location
-finegrained_alloc_path = os.path.join(current_dir, "csrc", "finegrained_alloc", "libfinegrained_allocator.so")
+finegrained_alloc_path = os.path.join(current_dir, "..", "csrc", "finegrained_alloc", "libfinegrained_allocator.so")
 
 # Check if the library exists (should be built during pip install)
 if not os.path.exists(finegrained_alloc_path):
@@ -47,7 +50,6 @@ torch.cuda.memory.change_current_allocator(finegrained_allocator)
 __all__ = [
     "Iris",
     "iris",
-    "translate",
     "load",
     "store",
     "get",
@@ -56,6 +58,9 @@ __all__ = [
     "atomic_sub",
     "atomic_cas",
     "atomic_xchg",
+    "atomic_xor",
+    "atomic_or",
     "do_bench",
     "memset_tensor",
+    "hip",
 ]

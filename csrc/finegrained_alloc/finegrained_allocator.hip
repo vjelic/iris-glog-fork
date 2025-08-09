@@ -8,34 +8,26 @@
 
 #include "hip/hip_runtime.h"
 
-#define hip_try(error)                                               \
-  if (error != hipSuccess) {                                         \
-    std::cerr << "[finegrained_allocator] Hip error: "               \
-              << hipGetErrorString(error) << " at line " << __LINE__ \
-              << std::endl;                                          \
-    exit(-1);                                                        \
+#define hip_try(error)                                                                            \
+  if (error != hipSuccess) {                                                                      \
+    std::cerr << "[finegrained_allocator] Hip error: " << hipGetErrorString(error) << " at line " \
+              << __LINE__ << std::endl;                                                           \
+    std::exit(EXIT_FAILURE);                                                                      \
   }
 
-inline bool is_logging_enabled() {
-  return std::getenv("LOG_FINEGRAINED_ALLOCATOR") != nullptr;
-}
+inline bool is_logging_enabled() { return std::getenv("LOG_FINEGRAINED_ALLOCATOR") != nullptr; }
 
-inline void log_allocation(const char* operation,
-                           void* ptr,
-                           ssize_t size,
-                           int device) {
+inline void log_allocation(const char* operation, void* ptr, ssize_t size, int device) {
   if (is_logging_enabled()) {
-    std::cout << "[finegrained_allocator] " << operation << ": ptr=" << ptr
-              << ", size=" << size << " bytes, device=" << device << std::endl;
+    std::cout << "[finegrained_allocator] " << operation << ": ptr=" << ptr << ", size=" << size
+              << " bytes, device=" << device << std::endl;
   }
 }
 
 extern "C" {
-void* finegrained_hipMalloc(ssize_t size,
-                            int device,
-                            hipStream_t stream [[maybe_unused]]) {
+void* finegrained_hipMalloc(ssize_t size, int device, hipStream_t stream [[maybe_unused]]) {
   void* ptr;
-  const auto flags = hipDeviceMallocUncached;
+  const auto flags = hipDeviceMallocFinegrained;
 
   int current_device;
   hip_try(hipGetDevice(&current_device));

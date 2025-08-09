@@ -10,7 +10,7 @@ from iris._mpi_helpers import (
     world_barrier,
     mpi_broadcast_tensor,
 )
-from iris._hip import (
+from iris.hip import (
     set_device,
     get_cu_count,
     count_devices,
@@ -90,8 +90,8 @@ class Iris:
         if STATS:
             print(f"[Iris] [{self.cur_rank}/{self.num_ranks}] {message}")
 
-    def broadcast(self, source_rank, value):
-        return mpi_broadcast_scalar(source_rank, value)
+    def broadcast(self, value, source_rank):
+        return mpi_broadcast_scalar(value, source_rank)
 
     def broadcast_tensor(self, value, source_rank=0): 
         return mpi_broadcast_tensor(value, root=source_rank)
@@ -125,12 +125,46 @@ class Iris:
         new_tensor.zero_()
         return new_tensor
 
-    def arange(self, *size, dtype=torch.int, device=None):
-        self.log_debug(f"arange: size = {size}, dtype = {dtype}")
-        size, num_elements = self.parse_size(size)
-        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
-        tensor[:] = torch.arange(num_elements, device="cuda", dtype=dtype)
-        return tensor.reshape(size)
+    def arange(
+        self, start=0, end=None, step=1, out=None, dtype=None, layout=torch.strided, device=None, requires_grad=False
+    ):
+        """
+        Returns a 1-D tensor of size ⌈(end - start) / step⌉ with values from the interval [start, end)
+        taken with common difference step beginning from start.
+
+        Args:
+            start (Number, optional): the starting value for the set of points. Default: 0.
+            end (Number): the ending value for the set of points
+            step (Number, optional): the gap between each pair of adjacent points. Default: 1.
+            out (Tensor, optional): the output tensor.
+            dtype (torch.dtype, optional): the desired data type of returned tensor.
+            layout (torch.layout, optional): the desired layout of returned Tensor. Default: torch.strided.
+            device (torch.device, optional): the desired device of returned tensor.
+            requires_grad (bool, optional): If autograd should record operations on the returned tensor. Default: False.
+        """
+        self.log_debug(f"arange: start = {start}, end = {end}, step = {step}, dtype = {dtype}")
+
+        # Handle the case where only one argument is provided (end)
+        if end is None:
+            end = start
+            start = 0
+        # Calculate the number of elements
+        num_elements = math.ceil((end - start) / step)
+        # Infer dtype if not provided
+        if dtype is None:
+            if any(isinstance(x, float) for x in [start, end, step]):
+                dtype = torch.get_default_dtype()
+            else:
+                dtype = torch.int64
+        if out is not None:
+            self.__throw_if_invalid_output_tensor(out, num_elements, dtype)
+            tensor = out
+        else:
+            tensor = self.allocate(num_elements=num_elements, dtype=dtype)
+        tensor[:] = torch.arange(start, end, step, dtype=dtype, device="cuda")
+        if requires_grad:
+            tensor.requires_grad_()
+        return tensor
 
     def zeros(self, *size, dtype=torch.int, device=None, requires_grad=False, **kwargs):
         self.log_debug(f"zeros: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}")
@@ -162,11 +196,40 @@ class Iris:
             tensor.requires_grad_()
         return tensor.reshape(size)
 
-    def ones(self, *size, dtype=torch.int):
-        self.log_debug(f"ones: size = {size}, dtype = {dtype}")
+    def ones(self, *size, out=None, dtype=None, layout=torch.strided, device=None, requires_grad=False):
+        """
+        Returns a tensor filled with the scalar value 1, with the shape defined by the variable argument size.
+
+        Args:
+            *size (int...): a sequence of integers defining the shape of the output tensor. Can be a variable number of arguments or a collection like a list or tuple.
+
+        Keyword Arguments:
+            out (Tensor, optional): the output tensor.
+            dtype (torch.dtype, optional): the desired data type of returned tensor. Default: if None, uses a global default (see torch.set_default_dtype()).
+            layout (torch.layout, optional): the desired layout of returned Tensor. Default: torch.strided.
+            device (torch.device, optional): the desired device of returned tensor. Default: if None, uses the current device for the default tensor type.
+            requires_grad (bool, optional): If autograd should record operations on the returned tensor. Default: False.
+        """
+        self.log_debug(f"ones: size = {size}, dtype = {dtype}, device = {device}, requires_grad = {requires_grad}")
+
+        # Handle the case where size is provided as a single tuple/list
+        if len(size) == 1 and isinstance(size[0], (tuple, list)):
+            size = size[0]
+
+        # Use global default dtype if None is provided
+        if dtype is None:
+            dtype = torch.get_default_dtype()
         size, num_elements = self.parse_size(size)
-        tensor = self.allocate(num_elements=num_elements, dtype=dtype)
+
+        # If out is provided, use it; otherwise allocate new tensor
+        if out is not None:
+            self.__throw_if_invalid_output_tensor(out, num_elements, dtype)
+            tensor = out
+        else:
+            tensor = self.allocate(num_elements=num_elements, dtype=dtype)
         tensor.fill_(1)
+        if requires_grad:
+            tensor.requires_grad_()
         return tensor.reshape(size)
 
     def full(self, size, fill_value, dtype=torch.int):
@@ -227,218 +290,329 @@ class Iris:
     def get_num_ranks(self):
         return self.num_ranks
 
-    def wall_clock_rate(self, rank):
-        return get_wall_clock_rate(rank)
+    def __throw_if_invalid_output_tensor(self, tensor: torch.Tensor, num_elements: int, dtype: torch.dtype):
+        if not self.__tensor_on_device(tensor):
+            raise RuntimeError(
+                f"The output tensor is not on the same device as the Iris instance. The Iris instance is on device {self.device} but the output tensor is on device {tensor.device}"
+            )
+        if not self.__on_symmetric_heap(tensor):
+            raise RuntimeError(
+                f"The output tensor is not on the symmetric heap. The Iris instance is on heap base {self.heap_bases[self.cur_rank]} but the output tensor is on heap base {tensor.data_ptr()}"
+            )
+        if tensor.numel() != num_elements:
+            raise RuntimeError(f"The output tensor has {tensor.numel()} elements, but {num_elements} are required")
+        if tensor.dtype != dtype:
+            raise RuntimeError(f"The output tensor has dtype {tensor.dtype}, but {dtype} is required")
+
+    def __tensor_on_device(self, tensor: torch.Tensor):
+        return tensor.device == self.device
+
+    def __on_symmetric_heap(self, tensor: torch.Tensor):
+        return (
+            tensor.data_ptr() >= self.heap_bases[self.cur_rank]
+            and tensor.data_ptr() < self.heap_bases[self.cur_rank] + self.heap_size
+        )
 
 
 @triton.jit
-def translate(src_ptr, cur_rank, target_rank, heap_bases, debug=False):
-    src_base = tl.load(heap_bases + cur_rank)
-    dst_base = tl.load(heap_bases + target_rank)
+def __translate(ptr, from_rank, to_rank, heap_bases):
+    from_base = tl.load(heap_bases + from_rank)
+    to_base = tl.load(heap_bases + to_rank)
     # convert to int to compute difference
-    src_ptr_int = tl.cast(src_ptr, tl.uint64)
-    # Find the offset from current rank heap
-    offset = src_ptr_int - src_base
+    ptr_int = tl.cast(ptr, tl.uint64)
+    # Find the offset from from_rank heap
+    offset = ptr_int - from_base
     # Byte cast for byte offset addition
-    dst_base_byte = tl.cast(dst_base, tl.pointer_type(tl.int8))
-    # Find the offset into the destination heap
-    dst_ptr_byte = dst_base_byte + offset
-    # Cast dst_base back to pointer type
-    dst_ptr = tl.cast(dst_ptr_byte, src_ptr.dtype)
+    to_base_byte = tl.cast(to_base, tl.pointer_type(tl.int8))
+    # Find the offset into the to_rank heap
+    translated_ptr_byte = to_base_byte + offset
+    # Cast to_base back to pointer type
+    translated_ptr = tl.cast(translated_ptr_byte, ptr.dtype)
 
     # Optimization to vectorize the load/store
     # We can't do this in general because we don't know the shape of the tensor
-    # src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, (64, 64)), (64, 64))
-    # dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, (64, 64)), (64, 64))
+    # ptr = tl.max_contiguous(tl.multiple_of(ptr, (64, 64)), (64, 64))
+    # translated_ptr = tl.max_contiguous(tl.multiple_of(translated_ptr, (64, 64)), (64, 64))
 
+<<<<<<< HEAD
     if len(src_ptr.shape) > 0:
         src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, 512), (512,))
         dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, 512), (512,))
         # src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, (64, 64)), (64, 64))
         # dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, (64, 64)), (64, 64))
     return dst_ptr
+=======
+    # ptr = tl.max_contiguous(tl.multiple_of(ptr, 512), 512)
+    # translated_ptr = tl.max_contiguous(tl.multiple_of(translated_ptr, 512), 512)
+    return translated_ptr
+>>>>>>> origin/main
 
 
 @triton.jit
-def load(src_ptr, cur_rank, target_rank, heap_bases, mask=None):
+def load(pointer, to_rank, from_rank, heap_bases, mask=None):
     """
-    Loads a value from the specified memory location and rank.
+    Loads a value from the specified rank's memory location.
+
+    This function performs a memory read operation by translating the pointer
+    from the from_rank's address space to the to_rank's address space and loading
+    data from the target memory location. If the from_rank and to_rank are the same,
+    this function performs a local load operation.
 
     Args:
-        src_ptr (int): The source pointer.
-        cur_rank (int): The current rank.
-        target_rank (int): The target rank.
-        heap_bases (int): The heap bases.
-        mask (Optional[tl.tensor], optional): A boolean tensor used to guard memory accesses.
+        pointer (triton.PointerType, or block of dtype=triton.PointerType): Pointer in the from_rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        to_rank (int): The rank ID to which the pointer will be translated. Must be the current rank where the pointer is local.
+        from_rank (int): The rank ID from which to read the data.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not load the data at address pointer[idx]. Defaults to None.
 
     Returns:
-        Any: The loaded value.
+        Block: The loaded value from the target memory location.
     """
-    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases)
-    result = tl.load(dst_ptr, mask=mask)
+    translated_ptr = __translate(pointer, from_rank, to_rank, heap_bases)
+    result = tl.load(translated_ptr, mask=mask)
     return result
 
 
 @triton.jit
-def store(src_ptr, data, cur_rank, target_rank, heap_bases, mask=None):
+def store(pointer, value, from_rank, to_rank, heap_bases, mask=None):
     """
-    Writes data to the specified memory location and rank.
+    Writes data to the specified rank's memory location.
+
+    This function performs a memory write operation by translating the pointer
+    from the from_rank's address space to the to_rank's address space and storing
+    the provided data to the target memory location. If the from_rank and to_rank are the same,
+    this function performs a local store operation.
 
     Args:
-        src_ptr (int): The source pointer.
-        data (Any): The value to be written.
-        cur_rank (int): The current rank.
-        target_rank (int): The target rank.
-        heap_bases (int): The heap bases.
-        mask (Optional[tl.tensor], optional): A boolean tensor used to guard memory accesses. Defaults to None.
+        pointer (triton.PointerType, or block of dtype=triton.PointerType): Pointer in the from_rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        value (Block): The tensor of elements to be stored.
+        from_rank (int): The rank ID from which the pointer originates. Must be the current rank where the pointer is local.
+        to_rank (int): The rank ID to which the data will be written.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not store the data at address pointer[idx]. Defaults to None.
 
     Returns:
         None
     """
-    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
-    tl.store(dst_ptr, data, mask=mask)
+    translated_ptr = __translate(pointer, from_rank, to_rank, heap_bases)
+    tl.store(translated_ptr, value, mask=mask)
 
 
 @triton.jit
-def get(src_ptr, dst_ptr, cur_rank, target_rank, heap_bases, mask=None):
+def get(from_ptr, to_ptr, from_rank, to_rank, heap_bases, mask=None):
     """
-    Loads a value from the specified memory location and rank.
+    Copies data from the specified rank's memory to the current rank's local memory.
+
+    This function performs a memory read operation by translating the from_ptr
+    from the current rank's address space to the from_rank's address space, loading data
+    from the from_rank memory location, and storing it to the local to_ptr.
+    If the from_rank is the same as the current rank, this function performs a local copy operation.
 
     Args:
-        src_ptr (int): The source pointer.
-        dst_ptr (int): The destination pointer.
-        cur_rank (int): The current rank.
-        target_rank (int): The target rank.
-        heap_bases (int): The heap bases.
-        mask (Optional[tl.tensor], optional): A boolean tensor used to guard memory accesses.
-
-    Returns:
-        Any: The loaded value.
-    """
-    remote_src_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases)
-
-    data = tl.load(remote_src_ptr, mask=mask)
-
-    tl.store(dst_ptr, data, mask=mask)
-
-
-@triton.jit
-def put(src_ptr, dst_ptr, cur_rank, target_rank, heap_bases, mask=None):
-    """
-    Writes data to the specified memory location and rank.
-
-    Args:
-        src_ptr (int): The source pointer.
-        dst_ptr (int): The destination pointer.
-        cur_rank (int): The current rank.
-        target_rank (int): The target rank.
-        heap_bases (int): The heap bases.
-        mask (Optional[tl.tensor], optional): A boolean tensor used to guard memory accesses. Defaults to None.
+        from_ptr (triton.PointerType, or block of dtype=triton.PointerType): Pointer in the current rank's address space that will be translated to the from_rank's address space. Must be the current rank where the pointer is local.
+        to_ptr (triton.PointerType, or block of dtype=triton.PointerType): Pointer in the current rank's local memory where the data will be stored.
+        from_rank (int): The from_rank ID from which to read the data.
+        to_rank (int): The current rank ID where the data will be stored.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not load the data at address from_ptr[idx] and do not store to to_ptr[idx]. Defaults to None.
 
     Returns:
         None
     """
-    remote_dst_ptr = translate(dst_ptr, cur_rank, target_rank, heap_bases, False)
+    translated_from_ptr = __translate(from_ptr, to_rank, from_rank, heap_bases)
 
-    data = tl.load(src_ptr, mask=mask)
+    data = tl.load(translated_from_ptr, mask=mask)
 
-    tl.store(remote_dst_ptr, data, mask=mask)
-
-
-@triton.jit
-def atomic_add(src_ptr, data, cur_rank, target_rank, heap_bases, mask=None, sem=None, scope=None):
-    """
-        Atomically adds data to the specified memory location and rank.
-
-        Args:
-            src_ptr (int): The source pointer.
-            data (Any): The value to be added.
-            cur_rank (int): The current rank.
-            target_rank (int): The target rank.
-            heap_bases (int): The heap bases.
-            mask (Optional[tl.tensor], optional): A boolean tensor used to guard memory accesses. Defaults to None.
-            sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and
-    "relaxed". Defaults to "acq_rel".
-            scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta"
-    (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). Defaults to "gpu".
-
-        Returns:
-            Any: The result before the atomic addition.
-    """
-    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
-    return tl.atomic_add(dst_ptr, data, mask=mask, sem=sem, scope=scope)
+    tl.store(to_ptr, data, mask=mask)
 
 
 @triton.jit
-def atomic_sub(src_ptr, data, cur_rank, target_rank, heap_bases, mask=None, sem=None, scope=None):
+def put(from_ptr, to_ptr, from_rank, to_rank, heap_bases, mask=None):
     """
-        Atomically subtracts data from the specified memory location and rank.
+    Copies data from the current rank's local memory to the specified rank's memory.
+    This function performs a memory write operation by loading data from the current
+    rank's from_ptr, translating the to_ptr from the current rank's address
+    space to the to_rank's address space, and storing the data to the to_rank memory location.
+    If the to_rank is the same as the current rank, this function performs a local copy operation.
 
-        Args:
-            src_ptr (int): The source pointer.
-            data (Any): The value to be subtracted.
-            cur_rank (int): The current rank.
-            target_rank (int): The target rank.
-            heap_bases (int): The heap bases.
-            mask (Optional[tl.tensor], optional): A boolean tensor used to guard memory accesses. Defaults to None.
-            sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and
-    "relaxed". Defaults to "acq_rel".
-            scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta"
-    (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). Defaults to "gpu".
+    Args:
+        from_ptr (triton.PointerType, or block of dtype=triton.PointerType): Pointer in the current rank's local memory from which to read data.
+        to_ptr (triton.PointerType, or block of dtype=triton.PointerType): Pointer in the current rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        from_rank (int): The current rank ID from which to read the data.
+        to_rank (int): The to_rank ID to which the data will be written.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not load the data at address from_ptr[idx] and do not store to to_ptr[idx]. Defaults to None.
 
-        Returns:
-            Any: The value before the atomic subtraction.
+    Returns:
+        None
     """
-    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
-    return tl.atomic_sub(dst_ptr, data, mask=mask, sem=sem, scope=scope)
+    translated_to_ptr = __translate(to_ptr, from_rank, to_rank, heap_bases)
+
+    data = tl.load(from_ptr, mask=mask)
+
+    tl.store(translated_to_ptr, data, mask=mask)
 
 
 @triton.jit
-def atomic_cas(src_ptr, compare, value, cur_rank, target_rank, heap_bases, sem=None, scope=None):
+def atomic_add(pointer, val, from_rank, to_rank, heap_bases, mask=None, sem=None, scope=None):
     """
-        Atomically compares and exchanges the memory location at src_ptr.
+    Performs an atomic add at the specified rank's memory location.
 
-        Args:
-            src_ptr (int): The source pointer.
-            compare (Any): The expected value to be compared with the current value.
-            value (Any): The new value to be written if the compare succeeds.
-            cur_rank (int): The current rank.
-            target_rank (int): The target rank.
-            heap_bases (int): The heap bases.
-            sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and
-    "relaxed". Defaults to "acq_rel".
-            scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta"
-    (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). Defaults to "gpu".
+    This function performs an atomic addition operation by translating the pointer
+    from the from_rank's address space to the to_rank's address space and atomically
+    adding the provided data to the to_rank memory location. If the from_rank and to_rank are the same,
+    this function performs a local atomic addition operation.
 
-        Returns:
-            Any: The value contained at the pointer before the atomic operation attempt.
+    Args:
+        pointer (triton.PointerType, or block of dtype=triton.PointerType): The memory locations in the from_rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        val (Block of dtype=pointer.dtype.element_ty): The values with which to perform the atomic operation.
+        from_rank (int): The rank ID from which the pointer originates. Must be the current rank where the pointer is local.
+        to_rank (int): The rank ID to which the atomic operation will be performed.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not perform the atomic operation at address pointer[idx]. Defaults to None.
+        sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and "relaxed". If not provided, the function defaults to using "acq_rel" semantics.
+        scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta" (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). The default value is "gpu".
+
+    Returns:
+        Block: The data stored at pointer before the atomic operation.
     """
-    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
-    return tl.atomic_cas(dst_ptr, compare, value, sem=sem, scope=scope)
+    translated_ptr = __translate(pointer, from_rank, to_rank, heap_bases)
+    return tl.atomic_add(translated_ptr, val, mask=mask, sem=sem, scope=scope)
 
 
 @triton.jit
-def atomic_xchg(src_ptr, value, cur_rank, target_rank, heap_bases, mask=None, sem=None, scope=None):
+def atomic_sub(pointer, val, from_rank, to_rank, heap_bases, mask=None, sem=None, scope=None):
     """
-        Atomically exchanges the memory location at src_ptr with the given value.
+    Atomically subtracts data from the specified rank's memory location.
 
-        Args:
-            src_ptr (int): The source pointer.
-            value (Any): The new value to be written.
-            cur_rank (int): The current rank.
-            target_rank (int): The target rank.
-            heap_bases (int): The heap bases.
-            mask (Optional[tl.tensor], optional): A boolean tensor used to guard memory accesses. Defaults to None.
-            sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and
-    "relaxed". Defaults to "acq_rel".
-            scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta"
-    (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). Defaults to "gpu".
+    This function performs an atomic subtraction operation by translating the pointer
+    from the from_rank's address space to the to_rank's address space and atomically
+    subtracting the provided data from the to_rank memory location. If the from_rank and to_rank are the same,
+    this function performs a local atomic subtraction operation.
 
-        Returns:
-            Any: The old value at src_ptr before the exchange.
+    Args:
+        pointer (triton.PointerType, or block of dtype=triton.PointerType): Pointer in the from_rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        val (Block): The tensor of elements to be subtracted atomically.
+        from_rank (int): The rank ID from which the pointer originates. Must be the current rank where the pointer is local.
+        to_rank (int): The rank ID to which the atomic operation will be performed.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not perform the atomic operation at address pointer[idx]. Defaults to None.
+        sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and "relaxed". Defaults to "acq_rel".
+        scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta" (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). Defaults to "gpu".
+
+    Returns:
+        Block: The value at the memory location before the atomic subtraction.
     """
-    dst_ptr = translate(src_ptr, cur_rank, target_rank, heap_bases, False)
-    return tl.atomic_xchg(dst_ptr, value, mask=mask, sem=sem, scope=scope)
+    translated_ptr = __translate(pointer, from_rank, to_rank, heap_bases)
+    return tl.atomic_sub(translated_ptr, val, mask=mask, sem=sem, scope=scope)
+
+
+@triton.jit
+def atomic_cas(pointer, cmp, val, from_rank, to_rank, heap_bases, sem=None, scope=None):
+    """
+    Atomically compares and exchanges the specified rank's memory location.
+
+    This function performs an atomic compare-and-swap operation by translating the pointer
+    from the from_rank's address space to the to_rank's address space and atomically
+    comparing the current value with the expected value, then writing the new value if they match.
+    If the from_rank and to_rank are the same, this function performs a local atomic compare-and-swap operation.
+
+    Args:
+        pointer (triton.PointerType, or block of dtype=triton.PointerType): Pointer in the from_rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        cmp (Block): The expected value to be compared with the current value at the memory location.
+        val (Block): The new value to be written if the compare succeeds.
+        from_rank (int): The rank ID from which the pointer originates. Must be the current rank where the pointer is local.
+        to_rank (int): The rank ID to which the atomic operation will be performed.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and "relaxed". Defaults to "acq_rel".
+        scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta" (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). Defaults to "gpu".
+
+    Returns:
+        Block: The value contained at the memory location before the atomic operation attempt.
+    """
+    translated_ptr = __translate(pointer, from_rank, to_rank, heap_bases)
+    return tl.atomic_cas(translated_ptr, cmp, val, sem=sem, scope=scope)
+
+
+@triton.jit
+def atomic_xchg(pointer, val, from_rank, to_rank, heap_bases, mask=None, sem=None, scope=None):
+    """
+    Performs an atomic exchange at the specified rank's memory location.
+
+    This function performs an atomic exchange operation by translating the pointer
+    from the from_rank's address space to the to_rank's address space and atomically
+    exchanging the current value with the provided new value. If the from_rank and to_rank are the same,
+    this function performs a local atomic exchange operation.
+
+    Args:
+        pointer (triton.PointerType, or block of dtype=triton.PointerType): The memory locations in the from_rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        val (Block of dtype=pointer.dtype.element_ty): The values with which to perform the atomic operation.
+        from_rank (int): The rank ID from which the pointer originates. Must be the current rank where the pointer is local.
+        to_rank (int): The rank ID to which the atomic operation will be performed.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not perform the atomic operation at address pointer[idx]. Defaults to None.
+        sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and "relaxed". If not provided, the function defaults to using "acq_rel" semantics.
+        scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta" (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). The default value is "gpu".
+
+    Returns:
+        Block: The data stored at pointer before the atomic operation.
+    """
+    translated_ptr = __translate(pointer, from_rank, to_rank, heap_bases)
+    return tl.atomic_xchg(translated_ptr, val, mask=mask, sem=sem, scope=scope)
+
+
+@triton.jit
+def atomic_xor(pointer, val, from_rank, to_rank, heap_bases, mask=None, sem=None, scope=None):
+    """
+    Performs an atomic xor at the specified rank's memory location.
+
+    This function performs an atomic xor operation by translating the pointer
+    from the from_rank's address space to the to_rank's address space and atomically
+    xoring the provided data to the to_rank memory location. If the from_rank and to_rank are the same,
+    this function performs a local atomic xor operation.
+
+    Args:
+        pointer (triton.PointerType, or block of dtype=triton.PointerType): The memory locations in the from_rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        val (Block of dtype=pointer.dtype.element_ty): The values with which to perform the atomic operation.
+        from_rank (int): The rank ID from which the pointer originates. Must be the current rank where the pointer is local.
+        to_rank (int): The rank ID to which the atomic operation will be performed.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not perform the atomic operation at address pointer[idx]. Defaults to None.
+        sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and "relaxed". If not provided, the function defaults to using "acq_rel" semantics.
+        scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta" (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). The default value is "gpu".
+
+    Returns:
+        Block: The data stored at pointer before the atomic operation.
+    """
+    translated_ptr = __translate(pointer, from_rank, to_rank, heap_bases)
+    return tl.atomic_xor(translated_ptr, val, mask=mask, sem=sem, scope=scope)
+
+
+@triton.jit
+def atomic_or(pointer, val, from_rank, to_rank, heap_bases, mask=None, sem=None, scope=None):
+    """
+    Performs an atomic or at the specified rank's memory location.
+
+    This function performs an atomic or operation by translating the pointer
+    from the from_rank's address space to the to_rank's address space and atomically
+    oring the provided data to the to_rank memory location. If the from_rank and to_rank are the same,
+    this function performs a local atomic or operation.
+
+    Args:
+        pointer (triton.PointerType, or block of dtype=triton.PointerType): The memory locations in the from_rank's address space that will be translated to the to_rank's address space. Must be the current rank where the pointer is local.
+        val (Block of dtype=pointer.dtype.element_ty): The values with which to perform the atomic operation.
+        from_rank (int): The rank ID from which the pointer originates. Must be the current rank where the pointer is local.
+        to_rank (int): The rank ID to which the atomic operation will be performed.
+        heap_bases (triton.PointerType): Array containing the heap base addresses for all ranks.
+        mask (Block of triton.int1, optional): If mask[idx] is false, do not perform the atomic operation at address pointer[idx]. Defaults to None.
+        sem (str, optional): Specifies the memory semantics for the operation. Acceptable values are "acquire", "release", "acq_rel" (stands for "ACQUIRE_RELEASE"), and "relaxed". If not provided, the function defaults to using "acq_rel" semantics.
+        scope (str, optional): Defines the scope of threads that observe the synchronizing effect of the atomic operation. Acceptable values are "gpu" (default), "cta" (cooperative thread array, thread block), or "sys" (stands for "SYSTEM"). The default value is "gpu".
+
+    Returns:
+        Block: The data stored at pointer before the atomic operation.
+    """
+    translated_ptr = __translate(pointer, from_rank, to_rank, heap_bases)
+    return tl.atomic_or(translated_ptr, val, mask=mask, sem=sem, scope=scope)
 
 
 def iris(heap_size=1 << 30):
