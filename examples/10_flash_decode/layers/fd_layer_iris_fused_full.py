@@ -3,6 +3,16 @@ import triton
 import math
 import iris
 
+def format_kv_len(num):
+    """Formats a number into a human-readable string like 8K, 128K, 1M."""
+    if num < 1024:
+        return str(num)
+    for unit in ['', 'K', 'M', 'G', 'T']:
+        if abs(num) < 1024.0:
+            return f"{num:3.0f}{unit}"
+        num /= 1024.0
+    return f"{num:.1f}P"
+
 from kernels.decode_kernels import (
     gqa_local_decode_split_k,
     gqa_local_reduce_fused_full,
@@ -15,7 +25,7 @@ def gqa_local_kernels_fused_full(
     gathered_buffer, signal_flags, iris_instance,
 
     q_lens, kv_lens, block_table, scale, soft_cap=0.0,
-    output_split=None, kv_split=-1
+    output_split=None, kv_split=-1, kv_len_str=""
 ):
     batch, q_heads, q_head_dim = q.shape
     _, page_size, kv_heads, k_head_dim = k_cache.shape
@@ -38,7 +48,7 @@ def gqa_local_kernels_fused_full(
             [batch, q_heads, NUM_KV_SPLITS, v_head_dim + 1], dtype=q.dtype, device=q.device
         )
 
-    torch.cuda.nvtx.range_push("local_split")
+    torch.cuda.nvtx.range_push(f"local_split_{kv_len_str}")
     gqa_local_decode_split_k[grid_split_kv](
         q, k_cache, v_cache, output_split, scale, block_table, kv_lens,
         batch, q.stride(0), q.stride(1),
@@ -53,7 +63,7 @@ def gqa_local_kernels_fused_full(
 
     # Step 2: Fused Intra-Rank Combine and Inter-Rank Push with tile-level signaling
     grid_combine_push = (batch, q_heads)
-    torch.cuda.nvtx.range_push("local_combine")
+    torch.cuda.nvtx.range_push(f"local_combine_{kv_len_str}")
     gqa_local_reduce_fused_full[grid_combine_push](
         output_split,
         kv_lens,
@@ -102,6 +112,10 @@ class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
         self.signal_flags = self.iris_instance.zeros(
             (self.num_ranks, self.num_ranks, self.max_allowed_batch, self.num_q_heads), dtype=torch.int32
         )
+        
+        # self.producer_stream = torch.cuda.Stream()
+        # self.consumer_stream = torch.cuda.Stream()
+        
 
     def clear_flags(self):
         """Resets synchronization flags for the next iteration."""
@@ -113,26 +127,27 @@ class SpGQAFlashDecodeAttentionIrisFusedFull(torch.nn.Module):
         assert global_kv_lens.shape[0] == self.num_ranks
         assert global_kv_lens.shape[1] == batch
         assert batch <= self.max_allowed_batch
+        
+        kv_len = global_kv_lens[self.rank][0].item()
+        kv_len_str = format_kv_len(kv_len)
 
         output_split = torch.empty(
             [batch, self.num_q_heads, self.kv_split, self.v_head_dim + 1], dtype=q.dtype, device=q.device
         )
+        final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
         
-        # intra_rank_stream = torch.cuda.Stream()
-        # inter_rank_stream = torch.cuda.Stream()
         
-        # with torch.cuda.stream(intra_rank_stream):
+        # with torch.cuda.stream(self.producer_stream):
         gqa_local_kernels_fused_full(
             q, k_cache, v_cache,
             self.gathered_buffer, self.signal_flags, self.iris_instance,
             [1] * batch, global_kv_lens[self.rank], block_table, self.scale,
-            soft_cap=self.soft_cap, output_split=output_split, kv_split=self.kv_split
+            soft_cap=self.soft_cap, output_split=output_split, kv_split=self.kv_split, kv_len_str=kv_len_str
         )
+    
         
-        final_output = torch.empty([batch, self.num_q_heads, self.v_head_dim], dtype=q.dtype, device=q.device)
-        
-        # with torch.cuda.stream(inter_rank_stream):
-        torch.cuda.nvtx.range_push("final_combine")
+        # with torch.cuda.stream(self.consumer_stream):
+        torch.cuda.nvtx.range_push(f"final_combine_{kv_len_str}")
         kk3 = gqa_global_reduce_fused_full[(batch, self.num_q_heads)](
             self.gathered_buffer,
             final_output,

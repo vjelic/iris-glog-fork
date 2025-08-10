@@ -18,7 +18,7 @@ from layers.fd_layer_iris_fused_nonoptimized import SpGQAFlashDecodeAttentionIri
 from layers.fd_layer_iris_fused_full import SpGQAFlashDecodeAttentionIrisFusedFull
 from layers.fd_layer_iris_fused_persistent import SpGQAFlashDecodeAttentionIrisFusedPersistent
 
-CORRECTNESS_IMPL_TO_TEST = "FUSED_PERSISTENT"
+CORRECTNESS_IMPL_TO_TEST = "FUSED_FULL"
 PERF_IMPLS_TO_TEST = ["FUSED_FULL", "FUSED_PERSISTENT"]
 
 ALL_TESTS = {}
