@@ -18,7 +18,7 @@ from .iris import (
     atomic_cas,
     atomic_xchg,
     atomic_xor,
-    atomic_or
+    atomic_or,
 )
 
 from .util import (

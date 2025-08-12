@@ -10,6 +10,7 @@ import os
 
 import iris
 
+
 @triton.jit()
 def persistent_gemm_all_scatter_wg_specialization(
     A,
@@ -62,13 +63,12 @@ def persistent_gemm_all_scatter_wg_specialization(
     tl.assume(stride_cn > 0)
 
     acc_dtype = tl.float32 if C.type.element_ty != tl.int8 else tl.int32
-    
+
     # Workgroup specialization:
     # Split the kernel into two paths, one that performs the GEMM
     # and another that performs the communication. Uses persistent-
     # kernel.
     if pid < GEMM_SMS:
-    
         for tile_id in range(pid, total_tiles, GEMM_SMS):
             if COLLECT_TIMESTAMPS:
                 timestamp = read_realtime()
@@ -118,17 +118,17 @@ def persistent_gemm_all_scatter_wg_specialization(
 
             # Accumulator registers with C results
             c = acc.to(C.type.element_ty)
-            
+
             rm = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
             rn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
-            
+
             # Add compiler hints
             rm = tl.max_contiguous(tl.multiple_of(rm, BLOCK_SIZE_M), BLOCK_SIZE_M)
             rn = tl.max_contiguous(tl.multiple_of(rn, BLOCK_SIZE_N), BLOCK_SIZE_N)
-            
+
             # Define the C-mask (BLOCK_SIZE_M, 1) x (1, BLOCK_SIZE_N)
             sub_mask = (rm[:, None] < M) & (rn[None, :] < N)
-            
+
             # Calculate the "global" offset of C based on the rank.
             # Note how the N-dimension is being multiplied by current rank.
             # This is because each rank is computing a portion of the N-dimension
@@ -140,25 +140,22 @@ def persistent_gemm_all_scatter_wg_specialization(
             if COLLECT_TIMESTAMPS:
                 timestamp = read_realtime()
                 tl.atomic_max(mm_end_timestamp_ptr + tile_id, timestamp)
-                
+
             tl.store(c_global + global_offset, c, mask=sub_mask, cache_modifier=".wt")
             tl.debug_barrier()
             tl.store(locks + tile_id, 1, cache_modifier=".wt")
 
-    else: # pid >= GEMM_SMS
-        
+    else:  # pid >= GEMM_SMS
         COMM_SMS = NUM_SMS - GEMM_SMS
         pid = pid - GEMM_SMS
         for tile_id in range(pid, total_tiles, COMM_SMS):
-            
             num_pid_in_group = GROUP_SIZE_M * num_pid_n
             group_id = tile_id // num_pid_in_group
             first_pid_m = group_id * GROUP_SIZE_M
             group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
             pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
             pid_n = (tile_id % num_pid_in_group) // group_size_m
-            
-            
+
             # Begin: See the if segment for explanation:
             rm = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
             rn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
@@ -167,10 +164,17 @@ def persistent_gemm_all_scatter_wg_specialization(
             sub_mask = (rm[:, None] < M) & (rn[None, :] < N)
             global_offset = rm[:, None] * stride_cm_global + (rn[None, :] + cur_rank * N) * stride_cn_global
             # End: masks/offset calculations.
-            
+
             while tl.load(locks + tile_id, cache_modifier=".cv", volatile=True) != 1:
                 pass
-            
+
             for remote_rank in range(world_size):
                 if remote_rank != cur_rank:
-                    iris.put(c_global + global_offset, c_global + global_offset, cur_rank, remote_rank, heap_bases, mask=sub_mask)
+                    iris.put(
+                        c_global + global_offset,
+                        c_global + global_offset,
+                        cur_rank,
+                        remote_rank,
+                        heap_bases,
+                        mask=sub_mask,
+                    )
