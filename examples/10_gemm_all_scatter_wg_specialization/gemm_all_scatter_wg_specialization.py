@@ -91,7 +91,7 @@ def persistent_gemm_all_scatter_wg_specialization(
             B_BASE = B + rk[:, None] * stride_bk + rn[None, :] * stride_bn
 
             tl.assume(pid_m >= 0)
-            tl.assume(pid_n > 0)
+            tl.assume(pid_n >= 0)
 
             loop_k = tl.cdiv(K, BLOCK_SIZE_K)
             if not EVEN_K:
