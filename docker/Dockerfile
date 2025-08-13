@@ -37,7 +37,7 @@ RUN sudo pip3 install mpi4py
 # Clone and install Triton
 WORKDIR $TRITON_PATH
 RUN git clone https://github.com/triton-lang/triton.git $TRITON_PATH
-RUN git checkout eb73b0373a7fb4cd2e563f68e3488a96525562eb
+RUN git checkout dd5823453bcc7973eabadb65f9d827c43281c434
 RUN pip3 install -e .
 ENV PYTHONPATH=$TRITON_PATH
 
