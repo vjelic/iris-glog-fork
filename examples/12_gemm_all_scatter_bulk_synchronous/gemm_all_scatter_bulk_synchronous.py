@@ -10,6 +10,7 @@ import os
 
 import iris
 
+
 @triton.jit()
 def persistent_gemm(
     A,
@@ -57,7 +58,7 @@ def persistent_gemm(
     tl.assume(stride_cn > 0)
 
     acc_dtype = tl.float32 if C.type.element_ty != tl.int8 else tl.int32
-    
+
     for tile_id in range(pid, total_tiles, GEMM_SMS):
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
@@ -107,17 +108,17 @@ def persistent_gemm(
 
         # Accumulator registers with C results
         c = acc.to(C.type.element_ty)
-        
+
         rm = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
         rn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
-        
+
         # Add compiler hints
         rm = tl.max_contiguous(tl.multiple_of(rm, BLOCK_SIZE_M), BLOCK_SIZE_M)
         rn = tl.max_contiguous(tl.multiple_of(rn, BLOCK_SIZE_N), BLOCK_SIZE_N)
-        
+
         # Define the C-mask (BLOCK_SIZE_M, 1) x (1, BLOCK_SIZE_N)
         sub_mask = (rm[:, None] < M) & (rn[None, :] < N)
-        
+
         # Calculate the "global" offset of C based on the rank.
         # Note how the N-dimension is being multiplied by current rank.
         # This is because each rank is computing a portion of the N-dimension
@@ -129,8 +130,9 @@ def persistent_gemm(
         if COLLECT_TIMESTAMPS:
             timestamp = read_realtime()
             tl.atomic_max(mm_end_timestamp_ptr + tile_id, timestamp)
-            
+
         tl.store(C + global_offset, c, mask=sub_mask, cache_modifier=".wt")
+
 
 @triton.jit()
 def persistent_all_scatter(
@@ -151,7 +153,6 @@ def persistent_all_scatter(
     mm_begin_timestamp_ptr: tl.tensor = None,
     mm_end_timestamp_ptr: tl.tensor = None,
 ):
-    
     pid = tl.program_id(0)
 
     if NUM_XCDS != 1:
@@ -159,19 +160,18 @@ def persistent_all_scatter(
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
     num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
     total_tiles = num_pid_m * num_pid_n
-    
+
     for tile_id in range(pid, total_tiles, COMM_SMS):
-        
         num_pid_in_group = GROUP_SIZE_M * num_pid_n
         group_id = tile_id // num_pid_in_group
         first_pid_m = group_id * GROUP_SIZE_M
         group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
         pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
         pid_n = (tile_id % num_pid_in_group) // group_size_m
-        
+
         tl.assume(pid_m >= 0)
         tl.assume(pid_n >= 0)
-        
+
         # Begin: See the if segment for explanation:
         rm = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
         rn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
@@ -180,7 +180,7 @@ def persistent_all_scatter(
         sub_mask = (rm[:, None] < M) & (rn[None, :] < N)
         global_offset = rm[:, None] * stride_cm_global + (rn[None, :] + cur_rank * N) * stride_cn_global
         # End: masks/offset calculations.
-        
+
         for remote_rank in range(world_size):
             if remote_rank != cur_rank:
                 iris.put(C + global_offset, C + global_offset, cur_rank, remote_rank, heap_bases, mask=sub_mask)

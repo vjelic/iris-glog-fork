@@ -52,7 +52,9 @@ def parse_args():
     parser.add_argument("--BLK_K", type=int, default=64, help="Block size K")
     parser.add_argument("--gsize_m", type=int, default=6, help="L2-cache locality swizzle parameter")
     parser.add_argument("--heap_size", type=int, default=1 << 33, help="Iris heap size")
-    parser.add_argument("--gemm_sms", type=int, default=256, help="Number of SMs for workgroup-specialized GEMM algorithm")
+    parser.add_argument(
+        "--gemm_sms", type=int, default=256, help="Number of SMs for workgroup-specialized GEMM algorithm"
+    )
     parser.add_argument("--comm_sms", type=int, default=256, help="Number of SMs for All-Scatter kernel")
 
     return vars(parser.parse_args())
@@ -106,9 +108,9 @@ def main():
     total_blocks_M = triton.cdiv(args["m"], args["BLK_M"])
     total_blocks_N = triton.cdiv(args["n"], args["BLK_N"])
     total_tiles = total_blocks_M * total_blocks_N
-    
+
     bias = None
-    
+
     num_xcds = 1
     arch = "gfx942"
     if arch == "gfx942" or arch == "gfx950":
