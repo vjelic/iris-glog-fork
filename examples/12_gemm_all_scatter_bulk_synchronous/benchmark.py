@@ -53,9 +53,9 @@ def parse_args():
     parser.add_argument("--gsize_m", type=int, default=6, help="L2-cache locality swizzle parameter")
     parser.add_argument("--heap_size", type=int, default=1 << 33, help="Iris heap size")
     parser.add_argument(
-        "--gemm_sms", type=int, default=256, help="Number of SMs for workgroup-specialized GEMM algorithm"
+        "--gemm_sms", type=int, default=304, help="Number of SMs for workgroup-specialized GEMM algorithm"
     )
-    parser.add_argument("--comm_sms", type=int, default=256, help="Number of SMs for All-Scatter kernel")
+    parser.add_argument("--comm_sms", type=int, default=304, help="Number of SMs for All-Scatter kernel")
 
     return vars(parser.parse_args())
 

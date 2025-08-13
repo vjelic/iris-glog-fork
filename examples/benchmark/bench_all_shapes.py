@@ -127,8 +127,9 @@ def main(hashes, config, sbatch_script_content, input_json, tiling_json, dry_run
     algorithms_iter = algorithms if enable_algorithms else ["all_scatter"]
     unique_mkn_iter = list(enumerate(unique_mkn)) if enable_mkn else [(0, (8192, 36864, 4608))]
 
-    python_file = "examples/07_gemm_all_scatter/benchmark.py"
-
+    #python_file = "examples/07_gemm_all_scatter/benchmark.py"
+    python_file = "examples/10_gemm_all_scatter_wg_specialization/benchmark.py"
+    python_file = "examples/12_gemm_all_scatter_bulk_synchronous/benchmark.py"
     for hash in hashes:
         for algorithm in algorithms_iter:
             for i, (m, k, n) in unique_mkn_iter:
@@ -190,18 +191,26 @@ def main(hashes, config, sbatch_script_content, input_json, tiling_json, dry_run
 
 
 if __name__ == "__main__":
+    iris_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
     parser = argparse.ArgumentParser(description="Process partition and commit hashes.")
     parser.add_argument("--partition", nargs="?", default=None, help="The partition name (optional)")
     parser.add_argument("--commit_before", nargs="?", default=None, help="Commit hash before (optional)")
     parser.add_argument("--commit_after", nargs="?", default=None, help="Commit hash after (optional)")
-    parser.add_argument("--input_json", type=str, required=True, help="Path to input JSON file")
-    parser.add_argument("--tiling_json", type=str, required=True, help="Path to input JSON file")
+    parser.add_argument("--input_json", type=str, default=os.path.join(iris_dir, "dataset", "mini.json"), help="Path to input JSON file")
+    parser.add_argument("--tiling_json", type=str, default=os.path.join(iris_dir, "dataset", "tiling.json"), help="Path to input JSON file")
     parser.add_argument(
         "--dry_run",
         "-n",
         action="store_true",
         help="dry_run run (do not execute any commands)",
     )
+    parser.add_argument(
+        "--apptainer",
+        action="store_true",
+        help="use apptainer container (default: assume already inside container)",
+    )
+    
 
     args = parser.parse_args()
     partition = args.partition
@@ -216,9 +225,12 @@ if __name__ == "__main__":
         "partition": partition,
         "time_limit": "00:05:00",
         "exclude_list": "",
+        "use_apptainer": args.apptainer,
     }
 
-    sbatch_script_content = """#!/bin/bash
+    # Create sbatch script content based on whether to use apptainer
+    if config["use_apptainer"]:
+        sbatch_script_content = """#!/bin/bash
 #SBATCH -J {job_name}                               # Job name
 #SBATCH -o slurm_logs/{job_name}/{job_name}.%j.out  # Name of stdout output file (%j expands to jobId)
 #SBATCH -N 1                                        # Total number of nodes requested
@@ -250,7 +262,7 @@ echo "source /opt/conda/bin/activate py_3.10 &&\
     fi && \
     pip install -e . && \
     timeout 5m mpirun --allow-run-as-root -np ${{num_gpus}}\
-        python ${{python_file}} --algorithm ${{algorithm}}\
+        python ${{python_file}}\
             -m ${{m}} -n ${{n}} -k ${{k}}\
                 --gemm_sms ${{gemm_sms}}\
                 --BLK_M ${{blk_m}}\
@@ -260,11 +272,53 @@ echo "source /opt/conda/bin/activate py_3.10 &&\
                 --validate --benchmark --debug\
                 --heap_size 8589934592\
                 --output_file ${{output_json_file}}\
-                --num_stages ${{num_stages}}\
-                --num_warps ${{num_warps}}\
                 --datatype ${{datatype}}
         &> $output_log_file" \
     | apptainer exec --cleanenv ${{image_path}} bash
+    """
+    else:
+        sbatch_script_content = """#!/bin/bash
+#SBATCH -J {job_name}                               # Job name
+#SBATCH -o slurm_logs/{job_name}/{job_name}.%j.out  # Name of stdout output file (%j expands to jobId)
+#SBATCH -N 1                                        # Total number of nodes requested
+#SBATCH -n 128                                      # Total number of mpi tasks requested
+#SBATCH -t {time_limit}                             # Run time (hh:mm:ss)
+#SBATCH --partition={partition}                     # Partition
+#SBATCH --exclude={exclude_list}                    # Exclude list (e.g., node[01,13-15])
+num_gpus={num_gpus}
+algorithm={algorithm}
+m={m}
+n={n}
+k={k}
+output_json_file={output_json_file}
+output_log_file={output_log_file}
+gemm_sms={gemm_sms}
+blk_m={blk_m}
+blk_n={blk_n}
+blk_k={blk_k}
+gsize_m={gsize_m}
+python_file={python_file}
+num_stages=2
+datatype=fp16
+num_warps=8
+hash={hash}
+source /opt/conda/bin/activate py_3.10
+if [ "${{hash}}" != "latest" ]; then \
+    git reset --hard ${{hash}}; \
+fi
+pip install -e .
+timeout 5m mpirun --allow-run-as-root -np ${{num_gpus}}\
+    python ${{python_file}}\
+        -m ${{m}} -n ${{n}} -k ${{k}}\
+            --BLK_M ${{blk_m}}\
+            --BLK_N ${{blk_n}}\
+            --BLK_K ${{blk_k}}\
+            --gsize_m ${{gsize_m}}\
+            --validate --benchmark --debug\
+            --heap_size 8589934592\
+            --output_file ${{output_json_file}}\
+            --datatype ${{datatype}}
+    &> $output_log_file
     """
 
     main(
