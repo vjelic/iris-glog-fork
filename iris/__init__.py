@@ -18,7 +18,10 @@ from .iris import (
     atomic_cas,
     atomic_xchg,
     atomic_xor,
-    atomic_or
+    atomic_or,
+    atomic_and,
+    atomic_min,
+    atomic_max,
 )
 
 from .util import (
@@ -60,6 +63,9 @@ __all__ = [
     "atomic_xchg",
     "atomic_xor",
     "atomic_or",
+    "atomic_and",
+    "atomic_min",
+    "atomic_max",
     "do_bench",
     "memset_tensor",
     "hip",
