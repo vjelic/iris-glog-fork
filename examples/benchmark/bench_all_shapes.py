@@ -127,7 +127,7 @@ def main(hashes, config, sbatch_script_content, input_json, tiling_json, dry_run
     algorithms_iter = algorithms if enable_algorithms else ["all_scatter"]
     unique_mkn_iter = list(enumerate(unique_mkn)) if enable_mkn else [(0, (8192, 36864, 4608))]
 
-    #python_file = "examples/07_gemm_all_scatter/benchmark.py"
+    # python_file = "examples/07_gemm_all_scatter/benchmark.py"
     python_file = "examples/10_gemm_all_scatter_wg_specialization/benchmark.py"
     python_file = "examples/12_gemm_all_scatter_bulk_synchronous/benchmark.py"
     for hash in hashes:
@@ -197,8 +197,15 @@ if __name__ == "__main__":
     parser.add_argument("--partition", nargs="?", default=None, help="The partition name (optional)")
     parser.add_argument("--commit_before", nargs="?", default=None, help="Commit hash before (optional)")
     parser.add_argument("--commit_after", nargs="?", default=None, help="Commit hash after (optional)")
-    parser.add_argument("--input_json", type=str, default=os.path.join(iris_dir, "dataset", "mini.json"), help="Path to input JSON file")
-    parser.add_argument("--tiling_json", type=str, default=os.path.join(iris_dir, "dataset", "tiling.json"), help="Path to input JSON file")
+    parser.add_argument(
+        "--input_json", type=str, default=os.path.join(iris_dir, "dataset", "mini.json"), help="Path to input JSON file"
+    )
+    parser.add_argument(
+        "--tiling_json",
+        type=str,
+        default=os.path.join(iris_dir, "dataset", "tiling.json"),
+        help="Path to input JSON file",
+    )
     parser.add_argument(
         "--dry_run",
         "-n",
@@ -210,7 +217,6 @@ if __name__ == "__main__":
         action="store_true",
         help="use apptainer container (default: assume already inside container)",
     )
-    
 
     args = parser.parse_args()
     partition = args.partition
