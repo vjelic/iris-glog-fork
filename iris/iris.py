@@ -334,18 +334,12 @@ def __translate(ptr, from_rank, to_rank, heap_bases):
     # ptr = tl.max_contiguous(tl.multiple_of(ptr, (64, 64)), (64, 64))
     # translated_ptr = tl.max_contiguous(tl.multiple_of(translated_ptr, (64, 64)), (64, 64))
 
-<<<<<<< HEAD
-    if len(src_ptr.shape) > 0:
-        src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, 512), (512,))
-        dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, 512), (512,))
+    # if len(src_ptr.shape) > 0:
+    #     src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, 512), (512,))
+    #     dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, 512), (512,))
         # src_ptr = tl.max_contiguous(tl.multiple_of(src_ptr, (64, 64)), (64, 64))
         # dst_ptr = tl.max_contiguous(tl.multiple_of(dst_ptr, (64, 64)), (64, 64))
-    return dst_ptr
-=======
-    # ptr = tl.max_contiguous(tl.multiple_of(ptr, 512), 512)
-    # translated_ptr = tl.max_contiguous(tl.multiple_of(translated_ptr, 512), 512)
     return translated_ptr
->>>>>>> origin/main
 
 
 @triton.jit
