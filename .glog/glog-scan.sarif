@@ -1,0 +1,130 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Glog.AI",
+          "organization": "Glog.AI",
+          "fullName": "Glog, Making software more secure",
+          "version": "1.0.0",
+          "semanticVersion": "1.0.0",
+          "informationUri": "https://www.glog.ai",
+          "rules": [
+            {
+              "id": "glog-3cef63d3-64ae-4996-9458-3fc844a210f7",
+              "help": {
+                "text": "",
+                "markdown": "## Description\n\nThe vulnerability arises when a Python script uses the `os.chmod()` function to set the permissions of a file to `0o755`. This permission setting allows the owner of the file to read, write, and execute the file, while other users can only read and execute it. If the file contains sensitive data or operations, this could potentially expose the system to unauthorized access or malicious activities.\n\n## Mitigation Advice\n\nTo mitigate this vulnerability, you should:\n\n- Limit the permissions of the file as much as possible. Only grant the necessary permissions to the necessary users.\n- Avoid storing sensitive data in a file that has broad permissions.\n- Use access control mechanisms to restrict who can access the file.\n\n## Source Code Fix Recommendation\n\nInstead of setting the permissions to `0o755`, you could set them to `0o700` to only allow the owner of the file to read, write, and execute it:\n\n```python\nos.chmod(sbatch_script_path, 0o700)\n```\n\n## Library Dependencies\n\nThe code example only requires the built-in `os` module in Python, so no additional library dependencies are needed.\n\n## References\n\n- [CWE-732: Incorrect Permission Assignment for Critical Resource](https://cwe.mitre.org/data/definitions/732.html)"
+              },
+              "properties": {
+                "tags": [
+                  "B103"
+                ]
+              }
+            },
+            {
+              "id": "glog-abb408a9-1436-4b8d-80a3-956be32f7f4a",
+              "help": {
+                "text": "",
+                "markdown": "## Description\n\nThe vulnerability arises when a Python script uses the `os.chmod()` function to set the permissions of a file to `0o755`. This permission setting allows the owner of the file to read, write, and execute the file, while other users can only read and execute it. If the file contains sensitive data or operations, this could potentially expose the system to unauthorized access or malicious activities.\n\n## Mitigation Advice\n\nTo mitigate this vulnerability, you should:\n\n- Limit the permissions of the file as much as possible. Only grant the necessary permissions to the necessary users.\n- Avoid storing sensitive data in a file that has broad permissions.\n- Use access control mechanisms to restrict who can access the file.\n\n## Source Code Fix Recommendation\n\nInstead of setting the permissions to `0o755`, you could set them to `0o700` to only allow the owner of the file to read, write, and execute it:\n\n```python\nos.chmod(sbatch_script_path, 0o700)\n```\n\n## Library Dependencies\n\nThe code example only requires the built-in `os` module in Python, so no additional library dependencies are needed.\n\n## References\n\n- [CWE-732: Incorrect Permission Assignment for Critical Resource](https://cwe.mitre.org/data/definitions/732.html)"
+              },
+              "properties": {
+                "tags": [
+                  "B103"
+                ]
+              }
+            }
+          ],
+          "language": "en-US",
+          "contents": [
+            "localizedData",
+            "nonLocalizedData"
+          ],
+          "isComprehensive": false
+        }
+      },
+      "language": "en-US",
+      "results": [
+        {
+          "ruleId": "glog-3cef63d3-64ae-4996-9458-3fc844a210f7",
+          "kind": "fail",
+          "level": "warning",
+          "message": {
+            "text": "File Permission Vulnerability due to Chmod 0o755 Setting on sbatch_script_path File"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/benchmark/reference/bench_all_shapes.py"
+                },
+                "region": {
+                  "startLine": 54,
+                  "startColumn": 13,
+                  "endLine": 54,
+                  "endColumn": 48,
+                  "snippet": {
+                    "text": "            os.chmod(sbatch_script_path, 0o755)\n"
+                  }
+                },
+                "contextRegion": {
+                  "startLine": 53,
+                  "endLine": 55,
+                  "snippet": {
+                    "text": "        if config[\"partition\"] is None:\n            os.chmod(sbatch_script_path, 0o755)\n            subprocess.run(\n"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "issue_severity": "MEDIUM",
+            "issue_confidence": "HIGH"
+          }
+        },
+        {
+          "ruleId": "glog-abb408a9-1436-4b8d-80a3-956be32f7f4a",
+          "kind": "fail",
+          "level": "warning",
+          "message": {
+            "text": "File Permission Vulnerability due to Chmod 0o755 Setting on sbatch_script_path File"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/benchmark/bench_all_shapes.py"
+                },
+                "region": {
+                  "startLine": 73,
+                  "startColumn": 13,
+                  "endLine": 73,
+                  "endColumn": 48,
+                  "snippet": {
+                    "text": "            os.chmod(sbatch_script_path, 0o755)\n"
+                  }
+                },
+                "contextRegion": {
+                  "startLine": 72,
+                  "endLine": 74,
+                  "snippet": {
+                    "text": "        if config[\"partition\"] is None:\n            os.chmod(sbatch_script_path, 0o755)\n            subprocess.run(\n"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "issue_severity": "MEDIUM",
+            "issue_confidence": "HIGH"
+          }
+        }
+      ],
+      "newlineSequences": [
+        "\r\n",
+        "\n"
+      ]
+    }
+  ]
+}
