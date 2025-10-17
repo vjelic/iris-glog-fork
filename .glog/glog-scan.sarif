@@ -12,27 +12,26 @@
           "informationUri": "https://www.glog.ai",
           "rules": [
             {
-              "id": "b3a2bf5a-5979-3812-87e6-6554749095d9",
-              "name": "dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile",
+              "id": "ffbf5e09-3329-322b-87d8-852434f91cc4",
+              "name": "resources.rules.missing-pip-no-cache-dir",
               "shortDescription": {
-                "text": "Opengrep Finding: dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile"
+                "text": "Opengrep Finding: resources.rules.missing-pip-no-cache-dir"
               },
               "fullDescription": {
-                "text": "Avoid using sudo in Dockerfiles. Running processes as a non-root user can help  reduce the potential impact of configuration errors and security vulnerabilities."
+                "text": "This '$PIP install' is missing '--no-cache-dir'. This flag prevents\npackage archives from being kept around, thereby reducing image size.\nAdd '--no-cache-dir'.\n"
               },
               "defaultConfiguration": {
                 "enabled": true,
-                "level": "warning"
+                "level": "note"
               },
-              "helpUri": "https://semgrep.dev/r/dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile",
               "help": {
-                "text": "Avoid using sudo in Dockerfiles. Running processes as a non-root user can help  reduce the potential impact of configuration errors and security vulnerabilities.\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
-                "markdown": "Avoid using sudo in Dockerfiles. Running processes as a non-root user can help  reduce the potential impact of configuration errors and security vulnerabilities.\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>\n\n<b>References:</b>\n - [Semgrep Rule](https://semgrep.dev/r/dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile)\n - [https://cwe.mitre.org/data/definitions/250.html](https://cwe.mitre.org/data/definitions/250.html)\n - [https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user](https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user)\n"
+                "text": "This '$PIP install' is missing '--no-cache-dir'. This flag prevents\npackage archives from being kept around, thereby reducing image size.\nAdd '--no-cache-dir'.\n\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
+                "markdown": "This '$PIP install' is missing '--no-cache-dir'. This flag prevents\npackage archives from being kept around, thereby reducing image size.\nAdd '--no-cache-dir'.\n\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>\n\n<b>References:</b>\n - [https://github.com/hadolint/hadolint/wiki/DL3042](https://github.com/hadolint/hadolint/wiki/DL3042)\n"
               },
               "properties": {
                 "precision": "very-high",
                 "tags": [
-                  "dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile"
+                  "resources.rules.missing-pip-no-cache-dir"
                 ]
               }
             },
@@ -61,26 +60,27 @@
               }
             },
             {
-              "id": "ffbf5e09-3329-322b-87d8-852434f91cc4",
-              "name": "resources.rules.missing-pip-no-cache-dir",
+              "id": "b3a2bf5a-5979-3812-87e6-6554749095d9",
+              "name": "dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile",
               "shortDescription": {
-                "text": "Opengrep Finding: resources.rules.missing-pip-no-cache-dir"
+                "text": "Opengrep Finding: dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile"
               },
               "fullDescription": {
-                "text": "This '$PIP install' is missing '--no-cache-dir'. This flag prevents\npackage archives from being kept around, thereby reducing image size.\nAdd '--no-cache-dir'.\n"
+                "text": "Avoid using sudo in Dockerfiles. Running processes as a non-root user can help  reduce the potential impact of configuration errors and security vulnerabilities."
               },
               "defaultConfiguration": {
                 "enabled": true,
-                "level": "note"
+                "level": "warning"
               },
+              "helpUri": "https://semgrep.dev/r/dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile",
               "help": {
-                "text": "This '$PIP install' is missing '--no-cache-dir'. This flag prevents\npackage archives from being kept around, thereby reducing image size.\nAdd '--no-cache-dir'.\n\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
-                "markdown": "This '$PIP install' is missing '--no-cache-dir'. This flag prevents\npackage archives from being kept around, thereby reducing image size.\nAdd '--no-cache-dir'.\n\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>\n\n<b>References:</b>\n - [https://github.com/hadolint/hadolint/wiki/DL3042](https://github.com/hadolint/hadolint/wiki/DL3042)\n"
+                "text": "Avoid using sudo in Dockerfiles. Running processes as a non-root user can help  reduce the potential impact of configuration errors and security vulnerabilities.\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
+                "markdown": "Avoid using sudo in Dockerfiles. Running processes as a non-root user can help  reduce the potential impact of configuration errors and security vulnerabilities.\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>\n\n<b>References:</b>\n - [Semgrep Rule](https://semgrep.dev/r/dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile)\n - [https://cwe.mitre.org/data/definitions/250.html](https://cwe.mitre.org/data/definitions/250.html)\n - [https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user](https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user)\n"
               },
               "properties": {
                 "precision": "very-high",
                 "tags": [
-                  "resources.rules.missing-pip-no-cache-dir"
+                  "dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile"
                 ]
               }
             },
@@ -109,7 +109,7 @@
               }
             },
             {
-              "id": "50268ebb-8724-33a0-b058-ef66394542c8",
+              "id": "03bac847-2abe-3776-bc2e-25038382a776",
               "name": "resources.rules.use-sys-exit",
               "shortDescription": {
                 "text": "Opengrep Finding: resources.rules.use-sys-exit"
@@ -158,7 +158,7 @@
               }
             },
             {
-              "id": "03bac847-2abe-3776-bc2e-25038382a776",
+              "id": "50268ebb-8724-33a0-b058-ef66394542c8",
               "name": "resources.rules.use-sys-exit",
               "shortDescription": {
                 "text": "Opengrep Finding: resources.rules.use-sys-exit"
@@ -183,6 +183,30 @@
             },
             {
               "id": "5e9f082b-db9a-3ccf-a271-232c0f1fd4ee",
+              "name": "resources.rules.use-sys-exit",
+              "shortDescription": {
+                "text": "Opengrep Finding: resources.rules.use-sys-exit"
+              },
+              "fullDescription": {
+                "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python"
+              },
+              "defaultConfiguration": {
+                "enabled": true,
+                "level": "warning"
+              },
+              "help": {
+                "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
+                "markdown": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>"
+              },
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "resources.rules.use-sys-exit"
+                ]
+              }
+            },
+            {
+              "id": "0ab50c1e-8160-39c3-9ea7-e65f3418614d",
               "name": "resources.rules.use-sys-exit",
               "shortDescription": {
                 "text": "Opengrep Finding: resources.rules.use-sys-exit"
@@ -278,7 +302,31 @@
               }
             },
             {
-              "id": "0ab50c1e-8160-39c3-9ea7-e65f3418614d",
+              "id": "9646e39b-ef27-3ad5-8247-f6b951fe66f5",
+              "name": "resources.rules.use-sys-exit",
+              "shortDescription": {
+                "text": "Opengrep Finding: resources.rules.use-sys-exit"
+              },
+              "fullDescription": {
+                "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python"
+              },
+              "defaultConfiguration": {
+                "enabled": true,
+                "level": "warning"
+              },
+              "help": {
+                "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
+                "markdown": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>"
+              },
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "resources.rules.use-sys-exit"
+                ]
+              }
+            },
+            {
+              "id": "b30ff44b-6f0f-399e-8387-1b92ed46fb44",
               "name": "resources.rules.use-sys-exit",
               "shortDescription": {
                 "text": "Opengrep Finding: resources.rules.use-sys-exit"
@@ -326,30 +374,6 @@
               }
             },
             {
-              "id": "9646e39b-ef27-3ad5-8247-f6b951fe66f5",
-              "name": "resources.rules.use-sys-exit",
-              "shortDescription": {
-                "text": "Opengrep Finding: resources.rules.use-sys-exit"
-              },
-              "fullDescription": {
-                "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python"
-              },
-              "defaultConfiguration": {
-                "enabled": true,
-                "level": "warning"
-              },
-              "help": {
-                "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
-                "markdown": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>"
-              },
-              "properties": {
-                "precision": "very-high",
-                "tags": [
-                  "resources.rules.use-sys-exit"
-                ]
-              }
-            },
-            {
               "id": "a6807194-d961-3e0b-a85d-8ddb3b58ca79",
               "name": "resources.rules.use-sys-exit",
               "shortDescription": {
@@ -374,7 +398,7 @@
               }
             },
             {
-              "id": "b30ff44b-6f0f-399e-8387-1b92ed46fb44",
+              "id": "4907a142-1715-3eae-bc21-039c42151372",
               "name": "resources.rules.use-sys-exit",
               "shortDescription": {
                 "text": "Opengrep Finding: resources.rules.use-sys-exit"
@@ -394,6 +418,30 @@
                 "precision": "very-high",
                 "tags": [
                   "resources.rules.use-sys-exit"
+                ]
+              }
+            },
+            {
+              "id": "8bdd338c-e540-3f9d-8d05-9b79fe09f6e8",
+              "name": "resources.rules.dangerous-subprocess-use",
+              "shortDescription": {
+                "text": "Opengrep Finding: resources.rules.dangerous-subprocess-use"
+              },
+              "fullDescription": {
+                "text": "Detected subprocess function '$FUNC' without a static string. If this data can be\ncontrolled by a malicious actor, it may be an instance of command injection.\nAudit the use of this call to ensure it is not controllable by an external resource.\nYou may consider using 'shlex.escape()'.\n"
+              },
+              "defaultConfiguration": {
+                "enabled": true,
+                "level": "warning"
+              },
+              "help": {
+                "text": "Detected subprocess function '$FUNC' without a static string. If this data can be\ncontrolled by a malicious actor, it may be an instance of command injection.\nAudit the use of this call to ensure it is not controllable by an external resource.\nYou may consider using 'shlex.escape()'.\n\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
+                "markdown": "Detected subprocess function '$FUNC' without a static string. If this data can be\ncontrolled by a malicious actor, it may be an instance of command injection.\nAudit the use of this call to ensure it is not controllable by an external resource.\nYou may consider using 'shlex.escape()'.\n\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>\n\n<b>References:</b>\n - [https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess](https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess)\n - [https://docs.python.org/3/library/subprocess.html](https://docs.python.org/3/library/subprocess.html)\n - [https://docs.python.org/3/library/shlex.html](https://docs.python.org/3/library/shlex.html)\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "resources.rules.dangerous-subprocess-use"
                 ]
               }
             },
@@ -446,54 +494,6 @@
               }
             },
             {
-              "id": "8bdd338c-e540-3f9d-8d05-9b79fe09f6e8",
-              "name": "resources.rules.dangerous-subprocess-use",
-              "shortDescription": {
-                "text": "Opengrep Finding: resources.rules.dangerous-subprocess-use"
-              },
-              "fullDescription": {
-                "text": "Detected subprocess function '$FUNC' without a static string. If this data can be\ncontrolled by a malicious actor, it may be an instance of command injection.\nAudit the use of this call to ensure it is not controllable by an external resource.\nYou may consider using 'shlex.escape()'.\n"
-              },
-              "defaultConfiguration": {
-                "enabled": true,
-                "level": "warning"
-              },
-              "help": {
-                "text": "Detected subprocess function '$FUNC' without a static string. If this data can be\ncontrolled by a malicious actor, it may be an instance of command injection.\nAudit the use of this call to ensure it is not controllable by an external resource.\nYou may consider using 'shlex.escape()'.\n\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
-                "markdown": "Detected subprocess function '$FUNC' without a static string. If this data can be\ncontrolled by a malicious actor, it may be an instance of command injection.\nAudit the use of this call to ensure it is not controllable by an external resource.\nYou may consider using 'shlex.escape()'.\n\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>\n\n<b>References:</b>\n - [https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess](https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess)\n - [https://docs.python.org/3/library/subprocess.html](https://docs.python.org/3/library/subprocess.html)\n - [https://docs.python.org/3/library/shlex.html](https://docs.python.org/3/library/shlex.html)\n"
-              },
-              "properties": {
-                "precision": "very-high",
-                "tags": [
-                  "resources.rules.dangerous-subprocess-use"
-                ]
-              }
-            },
-            {
-              "id": "4907a142-1715-3eae-bc21-039c42151372",
-              "name": "resources.rules.use-sys-exit",
-              "shortDescription": {
-                "text": "Opengrep Finding: resources.rules.use-sys-exit"
-              },
-              "fullDescription": {
-                "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python"
-              },
-              "defaultConfiguration": {
-                "enabled": true,
-                "level": "warning"
-              },
-              "help": {
-                "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python\n💎 Enable cross-file analysis and Pro rules for free at sg.run/pro",
-                "markdown": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python\n\n#### 💎 Enable cross-file analysis and Pro rules for free at <a href='https://sg.run/pro'>sg.run/pro</a>"
-              },
-              "properties": {
-                "precision": "very-high",
-                "tags": [
-                  "resources.rules.use-sys-exit"
-                ]
-              }
-            },
-            {
               "id": "5cebace4-f035-376e-957f-690162960587",
               "name": "resources.rules.dangerous-subprocess-use",
               "shortDescription": {
@@ -529,11 +529,11 @@
       "language": "en-US",
       "results": [
         {
-          "ruleId": "b3a2bf5a-5979-3812-87e6-6554749095d9",
+          "ruleId": "ffbf5e09-3329-322b-87d8-852434f91cc4",
           "kind": "fail",
           "level": "warning",
           "message": {
-            "text": "Avoid using sudo in Dockerfiles. Running processes as a non-root user can help  reduce the potential impact of configuration errors and security vulnerabilities."
+            "text": "This 'pip3 install' is missing '--no-cache-dir'. This flag prevents\npackage archives from being kept around, thereby reducing image size.\nAdd '--no-cache-dir'.\n"
           },
           "locations": [
             {
@@ -543,19 +543,19 @@
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
-                  "startLine": 35,
+                  "startLine": 29,
                   "startColumn": 1,
-                  "endLine": 35,
-                  "endColumn": 29,
+                  "endLine": 29,
+                  "endColumn": 27,
                   "snippet": {
-                    "text": "RUN sudo pip3 install mpi4py"
+                    "text": "RUN pip3 install --upgrade pip && \\"
                   }
                 }
               }
             }
           ],
           "fingerprints": {
-            "matchBasedId/v1": "42a5b60dc83753d366aadb11afb8bd1861789c1188563a80485ca1945726fcdaf0f86919f49ef1a9130f9da6cf5ca404db85745c12d626c01b1f034a584c655b_0"
+            "matchBasedId/v1": "7e4ee39df4baf8a3533b14de8daa9d6dd2335b395e4718860222e4df0e37894a441f20168381a617904f7e9878d4573120731c1baa7971ae02a44696ccc40b54_0"
           },
           "properties": {}
         },
@@ -591,11 +591,11 @@
           "properties": {}
         },
         {
-          "ruleId": "ffbf5e09-3329-322b-87d8-852434f91cc4",
+          "ruleId": "b3a2bf5a-5979-3812-87e6-6554749095d9",
           "kind": "fail",
           "level": "warning",
           "message": {
-            "text": "This 'pip3 install' is missing '--no-cache-dir'. This flag prevents\npackage archives from being kept around, thereby reducing image size.\nAdd '--no-cache-dir'.\n"
+            "text": "Avoid using sudo in Dockerfiles. Running processes as a non-root user can help  reduce the potential impact of configuration errors and security vulnerabilities."
           },
           "locations": [
             {
@@ -605,19 +605,19 @@
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
-                  "startLine": 29,
+                  "startLine": 35,
                   "startColumn": 1,
-                  "endLine": 29,
-                  "endColumn": 27,
+                  "endLine": 35,
+                  "endColumn": 29,
                   "snippet": {
-                    "text": "RUN pip3 install --upgrade pip && \\"
+                    "text": "RUN sudo pip3 install mpi4py"
                   }
                 }
               }
             }
           ],
           "fingerprints": {
-            "matchBasedId/v1": "7e4ee39df4baf8a3533b14de8daa9d6dd2335b395e4718860222e4df0e37894a441f20168381a617904f7e9878d4573120731c1baa7971ae02a44696ccc40b54_0"
+            "matchBasedId/v1": "42a5b60dc83753d366aadb11afb8bd1861789c1188563a80485ca1945726fcdaf0f86919f49ef1a9130f9da6cf5ca404db85745c12d626c01b1f034a584c655b_0"
           },
           "properties": {}
         },
@@ -653,7 +653,7 @@
           "properties": {}
         },
         {
-          "ruleId": "50268ebb-8724-33a0-b058-ef66394542c8",
+          "ruleId": "03bac847-2abe-3776-bc2e-25038382a776",
           "kind": "fail",
           "level": "warning",
           "message": {
@@ -663,13 +663,13 @@
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "examples/02_all_load/all_load_bench.py",
+                  "uri": "examples/00_load/load_bench.py",
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
-                  "startLine": 100,
+                  "startLine": 75,
                   "startColumn": 9,
-                  "endLine": 100,
+                  "endLine": 75,
                   "endColumn": 16,
                   "snippet": {
                     "text": "        exit(1)"
@@ -679,7 +679,7 @@
             }
           ],
           "fingerprints": {
-            "matchBasedId/v1": "3b682cecf2dfa8fd7e48efe43d8f1f10ec3c47504e1433bee9510a029ee01d729b3466c4920e768c66fa8ac647c268b4d01c1af0be0502c9152755f32ab3bf72_0"
+            "matchBasedId/v1": "382492c48249721911345b09b5e74f1215ec74bcff93a91f6d0b4c6148af97ba5d9608228f97d83c25e1361d8a77ac9d9801778d261d97fd36646692e558c0dc_0"
           },
           "properties": {}
         },
@@ -715,7 +715,7 @@
           "properties": {}
         },
         {
-          "ruleId": "03bac847-2abe-3776-bc2e-25038382a776",
+          "ruleId": "50268ebb-8724-33a0-b058-ef66394542c8",
           "kind": "fail",
           "level": "warning",
           "message": {
@@ -725,13 +725,13 @@
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "examples/00_load/load_bench.py",
+                  "uri": "examples/02_all_load/all_load_bench.py",
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
-                  "startLine": 75,
+                  "startLine": 100,
                   "startColumn": 9,
-                  "endLine": 75,
+                  "endLine": 100,
                   "endColumn": 16,
                   "snippet": {
                     "text": "        exit(1)"
@@ -741,7 +741,7 @@
             }
           ],
           "fingerprints": {
-            "matchBasedId/v1": "382492c48249721911345b09b5e74f1215ec74bcff93a91f6d0b4c6148af97ba5d9608228f97d83c25e1361d8a77ac9d9801778d261d97fd36646692e558c0dc_0"
+            "matchBasedId/v1": "3b682cecf2dfa8fd7e48efe43d8f1f10ec3c47504e1433bee9510a029ee01d729b3466c4920e768c66fa8ac647c268b4d01c1af0be0502c9152755f32ab3bf72_0"
           },
           "properties": {}
         },
@@ -773,6 +773,37 @@
           ],
           "fingerprints": {
             "matchBasedId/v1": "1f45a1063ed1c89a02fded8795752ed3ac9030da796cd3adb0bd5ec8d12253f5b1f7c51749e0f05c258ab0e63cf7e6eb1f0495be6a27877235fa80009a907869_0"
+          },
+          "properties": {}
+        },
+        {
+          "ruleId": "0ab50c1e-8160-39c3-9ea7-e65f3418614d",
+          "kind": "fail",
+          "level": "warning",
+          "message": {
+            "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/04_atomic_add/atomic_add_bench.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 55,
+                  "startColumn": 9,
+                  "endLine": 55,
+                  "endColumn": 16,
+                  "snippet": {
+                    "text": "        exit(1)"
+                  }
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "matchBasedId/v1": "23b7d33158b64d1d22e24d4c115597b75e4de7482a9bef5067202e2d2550757bfdea29149116dbc17a48831b678bca6fef74ae42ad3b803d84a1f0be401c645a_0"
           },
           "properties": {}
         },
@@ -870,7 +901,7 @@
           "properties": {}
         },
         {
-          "ruleId": "0ab50c1e-8160-39c3-9ea7-e65f3418614d",
+          "ruleId": "9646e39b-ef27-3ad5-8247-f6b951fe66f5",
           "kind": "fail",
           "level": "warning",
           "message": {
@@ -880,13 +911,13 @@
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "examples/04_atomic_add/atomic_add_bench.py",
+                  "uri": "examples/07_gemm_all_scatter/benchmark.py",
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
-                  "startLine": 55,
+                  "startLine": 79,
                   "startColumn": 9,
-                  "endLine": 55,
+                  "endLine": 79,
                   "endColumn": 16,
                   "snippet": {
                     "text": "        exit(1)"
@@ -896,7 +927,7 @@
             }
           ],
           "fingerprints": {
-            "matchBasedId/v1": "23b7d33158b64d1d22e24d4c115597b75e4de7482a9bef5067202e2d2550757bfdea29149116dbc17a48831b678bca6fef74ae42ad3b803d84a1f0be401c645a_0"
+            "matchBasedId/v1": "29d308bdff607ad6d7052b52285f5f7bbff287acfed3a6c0a994dc816373bdd01dd05545cf7c6ee045cedf1cf8f292619dc1fe3d450372f217e2e5d2390ae77d_0"
           },
           "properties": {}
         },
@@ -932,7 +963,7 @@
           "properties": {}
         },
         {
-          "ruleId": "9646e39b-ef27-3ad5-8247-f6b951fe66f5",
+          "ruleId": "b30ff44b-6f0f-399e-8387-1b92ed46fb44",
           "kind": "fail",
           "level": "warning",
           "message": {
@@ -942,13 +973,13 @@
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "examples/07_gemm_all_scatter/benchmark.py",
+                  "uri": "examples/08_gemm_atomics_all_reduce/benchmark.py",
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
-                  "startLine": 79,
+                  "startLine": 96,
                   "startColumn": 9,
-                  "endLine": 79,
+                  "endLine": 96,
                   "endColumn": 16,
                   "snippet": {
                     "text": "        exit(1)"
@@ -958,7 +989,7 @@
             }
           ],
           "fingerprints": {
-            "matchBasedId/v1": "29d308bdff607ad6d7052b52285f5f7bbff287acfed3a6c0a994dc816373bdd01dd05545cf7c6ee045cedf1cf8f292619dc1fe3d450372f217e2e5d2390ae77d_0"
+            "matchBasedId/v1": "7f72309b68e2a27f6afa42f260908e672f500d6bd99ab1081a1f8612bdb8e04022df93e78b72aa3028942716e6941971dcd018362e2e398ba29e5a131cd3b569_0"
           },
           "properties": {}
         },
@@ -994,7 +1025,7 @@
           "properties": {}
         },
         {
-          "ruleId": "b30ff44b-6f0f-399e-8387-1b92ed46fb44",
+          "ruleId": "4907a142-1715-3eae-bc21-039c42151372",
           "kind": "fail",
           "level": "warning",
           "message": {
@@ -1004,7 +1035,7 @@
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "examples/08_gemm_atomics_all_reduce/benchmark.py",
+                  "uri": "examples/09_gemm_one_shot_all_reduce/benchmark.py",
                   "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
@@ -1020,7 +1051,38 @@
             }
           ],
           "fingerprints": {
-            "matchBasedId/v1": "7f72309b68e2a27f6afa42f260908e672f500d6bd99ab1081a1f8612bdb8e04022df93e78b72aa3028942716e6941971dcd018362e2e398ba29e5a131cd3b569_0"
+            "matchBasedId/v1": "5479981a7795b56dd13c85c0de3a0a157a9e2cfe2d3b722efefb1930e49404092e2f44861922b5277102e6bede5f0d65b63ddc89ff42cad885092a343dc7d235_0"
+          },
+          "properties": {}
+        },
+        {
+          "ruleId": "8bdd338c-e540-3f9d-8d05-9b79fe09f6e8",
+          "kind": "fail",
+          "level": "warning",
+          "message": {
+            "text": "Detected subprocess function 'run' without a static string. If this data can be\ncontrolled by a malicious actor, it may be an instance of command injection.\nAudit the use of this call to ensure it is not controllable by an external resource.\nYou may consider using 'shlex.escape()'.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/benchmark/bench_all_shapes.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 74,
+                  "startColumn": 13,
+                  "endLine": 79,
+                  "endColumn": 14,
+                  "snippet": {
+                    "text": "            subprocess.run(\n                sbatch_script_path,\n                capture_output=True,\n                text=True,\n                check=True,\n            )"
+                  }
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "matchBasedId/v1": "34480f7745888f96bb395e8c6c3fcad6e0ffa06a220b47dbad38e7292916bdba37f31f64a7bb444a1cf5935bbfd1eaffee38e188b5d95682ad8901cbb28e7632_0"
           },
           "properties": {}
         },
@@ -1083,68 +1145,6 @@
           ],
           "fingerprints": {
             "matchBasedId/v1": "4ab4bef3f95c73fa8aa4ceb37fc2ce3fd1b6860b59c6ac2f02267426fce94c12d0c259d2cab23f94453f1ddf2407ddfd5f3c98229819a6c8cc5fa54edb33936f_0"
-          },
-          "properties": {}
-        },
-        {
-          "ruleId": "8bdd338c-e540-3f9d-8d05-9b79fe09f6e8",
-          "kind": "fail",
-          "level": "warning",
-          "message": {
-            "text": "Detected subprocess function 'run' without a static string. If this data can be\ncontrolled by a malicious actor, it may be an instance of command injection.\nAudit the use of this call to ensure it is not controllable by an external resource.\nYou may consider using 'shlex.escape()'.\n"
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "examples/benchmark/bench_all_shapes.py",
-                  "uriBaseId": "%SRCROOT%"
-                },
-                "region": {
-                  "startLine": 74,
-                  "startColumn": 13,
-                  "endLine": 79,
-                  "endColumn": 14,
-                  "snippet": {
-                    "text": "            subprocess.run(\n                sbatch_script_path,\n                capture_output=True,\n                text=True,\n                check=True,\n            )"
-                  }
-                }
-              }
-            }
-          ],
-          "fingerprints": {
-            "matchBasedId/v1": "34480f7745888f96bb395e8c6c3fcad6e0ffa06a220b47dbad38e7292916bdba37f31f64a7bb444a1cf5935bbfd1eaffee38e188b5d95682ad8901cbb28e7632_0"
-          },
-          "properties": {}
-        },
-        {
-          "ruleId": "4907a142-1715-3eae-bc21-039c42151372",
-          "kind": "fail",
-          "level": "warning",
-          "message": {
-            "text": "Use `sys.exit` over the python shell `exit` built-in. `exit` is a helper for the interactive shell and may not be available on all Python implementations. https://stackoverflow.com/questions/6501121/difference-between-exit-and-sys-exit-in-python"
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "examples/09_gemm_one_shot_all_reduce/benchmark.py",
-                  "uriBaseId": "%SRCROOT%"
-                },
-                "region": {
-                  "startLine": 96,
-                  "startColumn": 9,
-                  "endLine": 96,
-                  "endColumn": 16,
-                  "snippet": {
-                    "text": "        exit(1)"
-                  }
-                }
-              }
-            }
-          ],
-          "fingerprints": {
-            "matchBasedId/v1": "5479981a7795b56dd13c85c0de3a0a157a9e2cfe2d3b722efefb1930e49404092e2f44861922b5277102e6bede5f0d65b63ddc89ff42cad885092a343dc7d235_0"
           },
           "properties": {}
         },
